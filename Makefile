@@ -1,23 +1,11 @@
-VENV_NAME := a_maze_ing_env
-
-NAME := a_maze_ing.py
-
-CONFIG_FILE := config.txt
-
-OUTPUT_FILE := maze.txt
-
-FLAKE8 := poetry run flake8
-
-MYPY := poetry run mypy
-
-PYTHON := poetry run python3
+VENV_NAME := .venv
+SRCDIR := src
 
 install:
-	@poetry install
+	@uv sync
 	
-
 run:
-	@$(PYTHON) $(NAME) $(CONFIG_FILE)
+	@uv run python -m $(SRCDIR)
 
 debug:
 

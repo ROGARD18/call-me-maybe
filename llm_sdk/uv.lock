@@ -220,7 +220,7 @@ wheels = [
 ]
 
 [[package]]
-name = "llm-sdk"
+name = "llm_sdk"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
