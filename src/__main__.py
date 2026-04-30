@@ -11,7 +11,6 @@ def check_token(token: str) -> str:
     token = token.replace('Ċ', '\n')
     return (token)
 
-
 def main() -> None:
     text: str = "How much do 40 + 2"
 
@@ -38,6 +37,8 @@ def main() -> None:
             next_token = key
     print(f"- next token = -{key_temp}-")
     print(f"- decode IDs: {llm.decode(ids)}")
+
+    
 
     for _ in range(200):
         log_list: list[float] = llm.get_logits_from_input_ids(ids)

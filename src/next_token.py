@@ -1,23 +1,5 @@
 import numpy as np
 
-class SimpleArithmeticParser:
-
-    def __init__(self) -> None:
-        self.stack = ["E"]
-        self.depth = 0
-
-    def valid_next_json(self, curr_text: str) -> set[str]:
-        last_char = curr_text[-1]
-        if (depth == 0):
-            return ({"{"})
-        if (depth == 1):
-            return ({"\n"})
-        if (depth == 2):
-            return ({'"'})
-        if (last_char == ','):
-            return ({"\n"})
-        return (set())
-
 
 class GrammarConstrainedSampler:
 
