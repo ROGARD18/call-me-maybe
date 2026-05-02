@@ -31,15 +31,13 @@ class GrammarConstrainedSampler:
             for char, id_ in token_to_char.items():
                 clean_char = char.replace('Ġ', ' ').replace(
                     'Ċ', '\n').replace('ĉ', '\t')
-                if ',' in clean_char or '.' in clean_char or '""' in clean_char:
+                if ',' in clean_char or '.' in clean_char:
                     continue
                 elif clean_char and all(c in set_char for c in clean_char):
                     is_allowed[id_] = True
         else:
             for char, id_ in token_to_char.items():
-                if ((not char) or (len(target_string) < len(char))):
-                    continue
-                elif target_string.startswith(char) or char.startswith(target_string):
+                if target_string.startswith(char):
                     is_allowed[id_] = True
 
         if not np.any(is_allowed):
@@ -65,6 +63,8 @@ def step_json(step: int, js: JSONState) -> str:
         return js.JSON_START
     elif step == 1:
         return js.KEY_PROMPT
+    elif step == 2:
+        return js.PROMPT_VALUE
     elif step == 3:
         return js.LINE_END
     elif step == 4:

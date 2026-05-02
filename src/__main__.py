@@ -24,6 +24,11 @@ def new_step(text: str, token: str, step: int, js: JSONState) -> int:
         js.KEY_PROMPT = js.KEY_PROMPT[len(token):]
         if not (js.KEY_PROMPT):
             return (2)
+    elif (step == 2):
+        # if (js.PROMPT_VALUE.startswith(token)):
+        js.PROMPT_VALUE = js.PROMPT_VALUE[len(token):]
+        if not (js.PROMPT_VALUE):
+            return (3)
     elif (step == 4):
         js.KEY_NAME = js.KEY_NAME[len(token):]
         if not (js.KEY_NAME):
@@ -41,7 +46,7 @@ def new_step(text: str, token: str, step: int, js: JSONState) -> int:
         if not (js.LINE_END):
             js.LINE_END = ',Ċĉĉ'
             return (step + 1)
-    elif (step == 2 or step == 5 or step == 8):
+    elif (step == 5 or step == 8):
         if ('"' in token):
             return (step + 1)
     return (step)
@@ -55,8 +60,8 @@ def check_token(token: str) -> str:
 
 
 def main() -> None:
-    js: JSONState = JSONState()
-    text: str = "How much do 40 + 2 ?"
+    text: str = "Salut c'est Antoine, comment tu vas ?"
+    js: JSONState = JSONState(text)
     prompt: str = make_prompt(text)
     generate_text: str = ""
 
@@ -66,7 +71,7 @@ def main() -> None:
     cons_sampler = GrammarConstrainedSampler(
         grammar_valid_fn=step_json)
     step: int = 0
-    while(True):
+    while (True):
         if (step == 10):
             break
         torch_tensor = llm.encode(prompt)
@@ -93,7 +98,6 @@ def main() -> None:
     print(generate_text)
 
     print(valid_js(generate_text))
-    
 
 
 if __name__ == "__main__":
