@@ -1,5 +1,5 @@
 import numpy as np
-from src.all_step import JSONState
+from src.jsonstate import JSONState
 
 
 class GrammarConstrainedSampler:
@@ -7,9 +7,12 @@ class GrammarConstrainedSampler:
         self.grammar_valid_fn = grammar_valid_fn
 
     @staticmethod
-    def make_set(text: str, step: int) -> set:
-        if (step == 2):
-            return (set(text).union('"'))
+    def make_set(text: str, step: int, functions: list) -> set:
+        if (step == 5):
+            functions_str: str = ""
+            for func in functions:
+                functions_str += func
+            return (set(functions_str))
         return (set())
 
     def constrained_sample(
@@ -18,16 +21,18 @@ class GrammarConstrainedSampler:
         logits: np.ndarray,
         text: str,
         prompt: str,
+        functions: list,
         step: int,
         token_to_char: dict[int, str],
     ) -> int:
-        target_string = self.grammar_valid_fn(step, js)
+        target_string = self.grammar_valid_fn(step, js, functions)
         print("Target ->", target_string)
+        print("step =", step)
         is_allowed = np.zeros(len(logits), dtype=bool)
 
         if target_string == "":
-            set_char = self.make_set(text, step)
-            # print (f"setchar == {set_char}")
+            set_char = self.make_set(text, step, functions)
+            print(f"setchar == {set_char}")
             for char, id_ in token_to_char.items():
                 clean_char = char.replace('Ġ', ' ').replace(
                     'Ċ', '\n').replace('ĉ', '\t')
@@ -57,8 +62,8 @@ class GrammarConstrainedSampler:
         return np.nan_to_num(out, nan=1.0/len(x))
 
 
-def step_json(step: int, js: JSONState) -> str:
-    print("step =", step)
+def step_json(step: int, js: JSONState, functions: list) -> str:
+    # print("step =", step)
     if step == 0:
         return js.JSON_START
     elif step == 1:
@@ -75,10 +80,4 @@ def step_json(step: int, js: JSONState) -> str:
         return js.KEY_PARA
     elif step == 9:
         return js.JSON_END
-
-    # if text.endswith('}'):
-    #     return ",\n\t{"
-    # last_line = text.split('\n')[-1]
-    # if '"' in last_line and (last_line.count('"') % 2 == 1) and ":" not in last_line:
-    #      return "prompt"
     return ("")

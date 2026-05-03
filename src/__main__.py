@@ -4,8 +4,9 @@ from src.vocab_dict import make_vocab_dict
 from src.prompt import make_prompt
 import numpy as np
 from src.next_token import GrammarConstrainedSampler, step_json
-from src.all_step import JSONState
+from src.jsonstate import JSONState
 from src.validate_json import validate_json as valid_js
+from src.get_function import get_functions
 
 
 def format_text(text: str) -> str:
@@ -46,7 +47,11 @@ def new_step(text: str, token: str, step: int, js: JSONState) -> int:
         if not (js.LINE_END):
             js.LINE_END = ',Ċĉĉ'
             return (step + 1)
-    elif (step == 5 or step == 8):
+    elif (step == 5):
+        js.NAME_LEN -= len(token)
+        if js.NAME_LEN < 1:
+            return (step + 1)
+    elif (step == 8):
         if ('"' in token):
             return (step + 1)
     return (step)
@@ -60,9 +65,10 @@ def check_token(token: str) -> str:
 
 
 def main() -> None:
-    text: str = "Salut c'est Antoine, comment tu vas ?"
-    js: JSONState = JSONState(text)
-    prompt: str = make_prompt(text)
+    text: str = "Reverse the string 'hello'"
+    functions: list = get_functions()
+    js: JSONState = JSONState(text, len(max(functions, key=len)))
+    prompt: str = make_prompt(text, functions)
     generate_text: str = ""
 
     llm: Small_LLM_Model = Small_LLM_Model()
@@ -83,6 +89,7 @@ def main() -> None:
             logits,
             text,
             prompt,
+            functions,
             step,
             vocab)
         for key, value in vocab.items():
@@ -98,6 +105,9 @@ def main() -> None:
     print(generate_text)
 
     print(valid_js(generate_text))
+
+    print()
+    get_functions()
 
 
 if __name__ == "__main__":

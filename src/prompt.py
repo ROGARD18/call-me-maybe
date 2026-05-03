@@ -1,12 +1,6 @@
-def make_prompt(text: str) -> str:
+def make_prompt(text: str, functions: list) -> str:
     return (
         "Generate a JSON with three line: <prompt>, "
-        f"<name> and <parameters>. Like :"
-        "["
-        "   {"
-        f"       'prompt': {text},"
-        "        'name': 'function',"
-        "        'parameters: 'parameter one, parameter two',"
-        "   },"
-        "]"
+        "<name> and <parameters>. You need to choose the "
+        f"function in name case, in this list: {functions}"
     )
