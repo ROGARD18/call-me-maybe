@@ -4,7 +4,7 @@ from src.vocab_dict import make_vocab_dict
 from src.prompt import make_prompt
 import numpy as np
 from src.next_token import GrammarConstrainedSampler, step_json
-from src.jsonstate import JSONState
+from src.class_ import JSONState, FunctionsClass
 from src.validate_json import validate_json as valid_js
 from src.get_function import get_functions
 
@@ -16,7 +16,8 @@ def format_text(text: str) -> str:
     return (text)
 
 
-def new_step(text: str, token: str, step: int, js: JSONState) -> int:
+def new_step(text: str, token: str, step: int, js: JSONState,
+             Functions: FunctionsClass) -> int:
     if (step == 0):
         js.JSON_START = js.JSON_START[len(token):]
         if not (js.JSON_START):
@@ -48,8 +49,14 @@ def new_step(text: str, token: str, step: int, js: JSONState) -> int:
             js.LINE_END = ',Ċĉĉ'
             return (step + 1)
     elif (step == 5):
-        js.NAME_LEN -= len(token)
-        if js.NAME_LEN < 1:
+        clean_token = token.replace('Ġ', '')
+
+        Functions.list = [
+            f for f in Functions.list if f.startswith(clean_token)]
+
+        for i in range(len(Functions.list)):
+            Functions.list[i] = Functions.list[i][len(clean_token):]
+        if any(len(f) == 0 for f in Functions.list):
             return (step + 1)
     elif (step == 8):
         if ('"' in token):
@@ -65,9 +72,11 @@ def check_token(token: str) -> str:
 
 
 def main() -> None:
-    text: str = "Reverse the string 'hello'"
+    text: str = "what is the reverse of the string 'Hello'"
     functions: list = get_functions()
-    js: JSONState = JSONState(text, len(max(functions, key=len)))
+    Functions: FunctionsClass = FunctionsClass(functions)
+    print(Functions.list)
+    js: JSONState = JSONState(text, len(max(Functions.list, key=len)))
     prompt: str = make_prompt(text, functions)
     generate_text: str = ""
 
@@ -89,7 +98,7 @@ def main() -> None:
             logits,
             text,
             prompt,
-            functions,
+            Functions,
             step,
             vocab)
         for key, value in vocab.items():
@@ -98,16 +107,18 @@ def main() -> None:
         print("token ->", next_token)
         generate_text += next_token
         prompt += next_token
-        step = new_step(text, next_token, step, js)
+        next_step: int = new_step(text, next_token, step, js, Functions)
+        if (next_step == 6 and step == 5):
+            generate_text += '"'
+        elif (next_step == 9 and step == 8):
+            generate_text += ','
+        step = next_step
 
     print("\n\nNEW prompt GENERATE:\n")
     generate_text = format_text(generate_text)
     print(generate_text)
 
     print(valid_js(generate_text))
-
-    print()
-    get_functions()
 
 
 if __name__ == "__main__":

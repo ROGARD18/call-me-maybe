@@ -8,3 +8,10 @@ class JSONState():
         self.KEY_NAME = '"name":Ġ"'
         self.KEY_PARA = '"parameters":Ġ"'
         self.NAME_LEN = function_len
+        self.FUNCTION = None
+
+
+class FunctionsClass():
+    def __init__(self, functions: list) -> None:
+        self.list: list = functions
+        self.valid_functions: list = [False for _ in range(len(functions))]
