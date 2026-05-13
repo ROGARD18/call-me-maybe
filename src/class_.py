@@ -23,7 +23,10 @@ class JSONState:
         self.PROMPT_VALUE = (
             f'{text.replace(" ", "Ġ").replace("\\t", "ĉ").replace("\\n", "Ċ")}"'
         )
-        self.KEY_NAME = '"name":Ġ"'
-        self.KEY_PARA = '"parameters":Ġ{'
-        self.NAME_LEN = function_len
+        self.KEY_NAME: str = '"name":Ġ"'
+        self.KEY_PARA: str = '"parameters":Ġ'
+        self.NAME_LEN: int = function_len
         self.FUNCTION = None
+        self.TYPES: list | None = None
+        self.param_order: int = 0
+        self.sub_step: int = 0

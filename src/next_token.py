@@ -22,6 +22,7 @@ class GrammarConstrainedSampler:
         step: int,
         vocab: dict[int, str],
     ) -> int:
+        alphabet: str = "abcdefghijklmnopqrstuvwxyz"
         target_string = self.grammar_valid_fn(step, js)
         print("Target ->", target_string)
         print("step =", step)
@@ -37,12 +38,63 @@ class GrammarConstrainedSampler:
 
                 if any(func.startswith(clean_token) for func in Functions.list):
                     is_allowed[id_] = True
-        elif (step == 8):
-            allowed_chars = set(text + '0123456789.:,"{} ')
+        elif step == 8:
+            is_allowed.fill(False)
+
+            # params_keys = list(Functions.definitions.get(js.FUNCTION, {}).keys())
+            current_letter = alphabet[js.param_order]
+            current_type = (
+                js.TYPES[js.param_order]
+                if js.TYPES and js.param_order < len(js.TYPES)
+                else "string"
+            )
+            print("SUB_STEP ==", js.sub_step)
             for char, id_ in vocab.items():
-                clean = char.replace('Ġ', ' ').replace('Ċ', '\n').replace('ĉ', '\t')
-                if clean and all(c in allowed_chars for c in clean):
-                    is_allowed[id_] = True
+
+                if js.sub_step == 0:
+                    if char == "{":
+                        is_allowed[id_] = True
+                        break
+
+                elif js.sub_step == 1 or js.sub_step == 3:
+                    if char == '"':
+                        is_allowed[id_] = True
+                        break
+
+                elif js.sub_step == 2:
+                    if char == current_letter:
+                        is_allowed[id_] = True
+                        break
+
+                elif js.sub_step == 4:
+                    if char == ":":
+                        is_allowed[id_] = True
+                        break
+
+                elif js.sub_step == 5:
+                    number: list = [
+                        "0",
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8",
+                        "9",
+                        ".",
+                    ]
+                    number = [n for n in number if n in text]
+                    if current_type == "number":
+                        if all(c in number for c in char) and char != "":
+                            is_allowed[id_] = True
+                    else:
+                        if all(c in text + '"' for c in char):
+                            is_allowed[id_] = True
+
+                    if char in ["}", ","]:
+                        is_allowed[id_] = True
 
         elif target_string == "":
             set_char = self.make_set(text, step)
@@ -93,6 +145,8 @@ def step_json(step: int, js: JSONState) -> str:
         return js.LINE_END
     elif step == 7:
         return js.KEY_PARA
+    # elif step == 8:
+    #     return (set(get))
     elif step == 9:
         return js.JSON_END
     return ""

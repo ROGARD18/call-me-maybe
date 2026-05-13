@@ -36,10 +36,9 @@ def new_step(
         if not (js.KEY_NAME):
             return 5
     elif step == 5:
-        clean_token = token.replace("Ġ", "")
-        Functions.list = [f for f in Functions.list if f.startswith(clean_token)]
+        Functions.list = [f for f in Functions.list if f.startswith(token)]
         for i in range(len(Functions.list)):
-            Functions.list[i] = Functions.list[i][len(clean_token) :]
+            Functions.list[i] = Functions.list[i][len(token) :]
         if any(len(f) == 0 for f in Functions.list):
             return 6
     elif step == 7:
@@ -47,8 +46,22 @@ def new_step(
         if not (js.KEY_PARA):
             return 8
     elif step == 8:
-        if "}" in token:
-            return 9
+        if js.sub_step == 0 and "{" in token:
+            js.sub_step = 1
+        elif js.sub_step == 1 and '"' in token:
+            js.sub_step = 2
+        elif js.sub_step == 2:  # On attend la fin du nom
+            js.sub_step = 3
+        elif js.sub_step == 3 and '"' in token:
+            js.sub_step = 4
+        elif js.sub_step == 4 and ':' in token:
+            js.sub_step = 5
+        elif js.sub_step == 5:
+            if "," in token:
+                js.param_order += 1
+                js.sub_step = 1  # Retour à la clé suivante
+            if "}" in token:
+                return 9
     elif step == 9:
         js.JSON_END = js.JSON_END[len(token) :]
         if not (js.JSON_END):
@@ -69,7 +82,7 @@ def check_token(token: str) -> str:
 
 
 def main() -> None:
-    text: str = "what is the reverse of the string 'Hello'"
+    text: str = "What is the sum of 15.63 and 78.1?"
     names, defs = get_functions()
     Functions: FunctionsClass = FunctionsClass(names, defs)
 
@@ -106,10 +119,15 @@ def main() -> None:
                 .replace('"', "")
                 .strip()
             )
-
+            parameters: dict = Functions.definitions.get(js.FUNCTION)
+            print("parameters ==", parameters)
+            types: list = []
+            for param in parameters:
+                print(f"test ____ = {parameters.get(param).get("type")}")
+                types.append(parameters.get(param).get("type"))
+            js.TYPES = types
+            print("---------------->>>>>>>", js.TYPES)
             generate_text += '"'
-        elif next_step == 9 and step == 8:
-            generate_text += ","
         step = next_step
 
     print("\n\nNEW prompt GENERATE:\n")
