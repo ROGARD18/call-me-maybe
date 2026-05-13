@@ -8,9 +8,9 @@ class GrammarConstrainedSampler:
 
     @staticmethod
     def make_set(text: str, step: int) -> set:
-        if (step == 8):
-            return (set(text + '"'))
-        return (set())
+        if step == 8:
+            return set(text + '"')
+        return set()
 
     def constrained_sample(
         self,
@@ -27,23 +27,31 @@ class GrammarConstrainedSampler:
         print("step =", step)
         is_allowed = np.zeros(len(logits), dtype=bool)
 
-        if (step == 5):
+        if step == 5:
             is_allowed.fill(False)
-            
+
             for char, id_ in vocab.items():
-                clean_token = char.replace('Ġ', '')
+                clean_token = char.replace("Ġ", "")
                 if not clean_token:
                     continue
 
                 if any(func.startswith(clean_token) for func in Functions.list):
                     is_allowed[id_] = True
+        elif (step == 8):
+            allowed_chars = set(text + '0123456789.:,"{} ')
+            for char, id_ in vocab.items():
+                clean = char.replace('Ġ', ' ').replace('Ċ', '\n').replace('ĉ', '\t')
+                if clean and all(c in allowed_chars for c in clean):
+                    is_allowed[id_] = True
+
         elif target_string == "":
             set_char = self.make_set(text, step)
             print(f"setchar == {set_char}")
             for char, id_ in vocab.items():
-                clean_char = char.replace('Ġ', ' ').replace(
-                    'Ċ', '\n').replace('ĉ', '\t')
-                if ',' in clean_char or '.' in clean_char:
+                clean_char = (
+                    char.replace("Ġ", " ").replace("Ċ", "\n").replace("ĉ", "\t")
+                )
+                if "," in clean_char or "." in clean_char:
                     continue
                 elif clean_char and all(c in set_char for c in clean_char):
                     is_allowed[id_] = True
@@ -66,7 +74,7 @@ class GrammarConstrainedSampler:
         if sum_e_x == 0:
             return np.ones(len(x)) / len(x)
         out = e_x / (sum_e_x + 1e-12)
-        return np.nan_to_num(out, nan=1.0/len(x))
+        return np.nan_to_num(out, nan=1.0 / len(x))
 
 
 def step_json(step: int, js: JSONState) -> str:
@@ -87,4 +95,4 @@ def step_json(step: int, js: JSONState) -> str:
         return js.KEY_PARA
     elif step == 9:
         return js.JSON_END
-    return ("")
+    return ""
