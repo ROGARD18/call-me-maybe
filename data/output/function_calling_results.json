@@ -44,6 +44,13 @@
     }
   },
   {
+    "prompt": "Sort the string '54876924'",
+    "name": "fn_sorte_string",
+    "parameters": {
+      "s": "54876924"
+    }
+  },
+  {
     "prompt": "What is the square root of 16?",
     "name": "fn_get_square_root",
     "parameters": {
@@ -61,8 +68,8 @@
     "prompt": "Replace all numbers in \"Hello 34 I'm 233 years old\" with NUMBERS",
     "name": "fn_add_numbers",
     "parameters": {
-      "a": 999,
-      "b": 888
+      "a": 34,
+      "b": 233
     }
   },
   {
@@ -70,16 +77,33 @@
     "name": "fn_substitute_string_with_regex",
     "parameters": {
       "source_string": "Programming is fun",
-      "regex": "a",
-      "replacement": "asterisk"
+      "regex": "[aeiouAEIOU]",
+      "replacement": "asterisks"
     }
   },
   {
     "prompt": "Substitute the word 'cat' with 'dog' in 'The cat sat on the mat with another cat'",
-    "name": "fn_add_numbers",
+    "name": "fn_substitute_string_with_regex",
     "parameters": {
-      "a": 1,
-      "b": 2
+      "source_string": "The cat sat on the mat with another cat",
+      "regex": "cat",
+      "replacement": "dog"
+    }
+  },
+  {
+    "prompt": "What is 4 multiplied by 5?",
+    "name": "fn_multiply_numbers",
+    "parameters": {
+      "a": 4,
+      "b": 5
+    }
+  },
+  {
+    "prompt": "What is the ROI of an investment that costs $1000 and returns $1500?",
+    "name": "fn_calculate_roi",
+    "parameters": {
+      "cost": 1000,
+      "return_amount": 1500
     }
   }
 ]

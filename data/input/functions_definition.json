@@ -39,10 +39,52 @@
     }
   },
   {
+    "name": "fn_sorte_string",
+    "description": "Sorte a string and return the sorted result.",
+    "parameters": {
+      "s": {
+        "type": "string"
+      }
+    },
+    "returns": {
+      "type": "string"
+    }
+  },
+  {
     "name": "fn_get_square_root",
     "description": "Calculate the square root of a number.",
     "parameters": {
       "a": {
+        "type": "number"
+      }
+    },
+    "returns": {
+      "type": "number"
+    }
+  },
+  {
+    "name": "fn_calculate_roi",
+    "description": "Calculate the return on investment for a given cost and return.",
+    "parameters": {
+      "cost": {
+        "type": "number"
+      },
+      "return_amount": {
+        "type": "number"
+      }
+    },
+    "returns": {
+      "type": "number"
+    }
+  },
+  {
+    "name": "fn_multiply_numbers",
+    "description": "Multiply two numbers together and return their product.",
+    "parameters": {
+      "a": {
+        "type": "number"
+      },
+      "b": {
         "type": "number"
       }
     },

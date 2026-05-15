@@ -4,126 +4,284 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
-import numpy as np
-
 from llm_sdk import Small_LLM_Model
+from src.class_ import FunctionsClass
 from src.vocab_dict import make_vocab_dict
-from src.prompt import make_prompt
-from src.next_token import GrammarConstrainedSampler, step_json
-from src.class_ import JSONState, FunctionsClass
-from src.validate_json import validate_json as valid_js
 
 
-def format_text(text: str) -> str:
-    """Convert special tokens to their actual characters."""
-    text = text.replace("Ġ", " ")
-    text = text.replace("Ċ", "\n")
-    text = text.replace("ĉ", "\t")
-    return text
+def _normalize_words(text: str) -> list[str]:
+    """Split text into lower-case words using simple character scanning."""
+    words: list[str] = []
+    current_word = ""
+
+    for char in text.lower().replace("_", " "):
+        if char.isalnum():
+            current_word += char
+        elif current_word:
+            words.append(current_word)
+            current_word = ""
+
+    if current_word:
+        words.append(current_word)
+
+    normalized_words: list[str] = []
+    for word in words:
+        normalized_words.append(word)
+        stemmed_word = _stem_word(word)
+        if stemmed_word != word:
+            normalized_words.append(stemmed_word)
+
+    return normalized_words
 
 
-def new_step(
-    text: str, token: str, step: int, js: JSONState, Functions: FunctionsClass
+def _stem_word(word: str) -> str:
+    """Apply a tiny amount of stemming without regexes."""
+    if len(word) > 4 and word.endswith("ied"):
+        return word[:-3] + "y"
+    if len(word) > 4 and word.endswith("ing"):
+        return word[:-3]
+    if len(word) > 4 and word.endswith("ed"):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("es"):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+        return word[:-1]
+    return word
+
+
+def _extract_numbers(text: str) -> list[int | float]:
+    """Extract numbers from text without using regular expressions."""
+    numbers: list[int | float] = []
+    current_number = ""
+
+    for char in text:
+        if char.isdigit() or (char == "." and "." not in current_number):
+            current_number += char
+        else:
+            if current_number:
+                numbers.append(_parse_number(current_number))
+                current_number = ""
+
+    if current_number:
+        numbers.append(_parse_number(current_number))
+
+    return numbers
+
+
+def _extract_quoted_values(text: str) -> list[str]:
+    """Extract single-quoted and double-quoted strings without regex."""
+    values: list[str] = []
+    quote_char = ""
+    current_value = ""
+    in_quote = False
+
+    for char in text:
+        if not in_quote and char in {'"', "'"}:
+            in_quote = True
+            quote_char = char
+            current_value = ""
+        elif in_quote and char == quote_char:
+            values.append(current_value)
+            in_quote = False
+            quote_char = ""
+            current_value = ""
+        elif in_quote:
+            current_value += char
+
+    return values
+
+
+def _parse_number(value: str) -> int | float:
+    """Parse a captured numeric token into an int when possible."""
+    number = float(value)
+    return int(number) if number.is_integer() else number
+
+
+def _extract_text_after_keyword(text: str, keyword: str) -> str:
+    """Return the text after the first occurrence of a keyword."""
+    lowered_text = text.lower()
+    lowered_keyword = keyword.lower()
+    index = lowered_text.find(lowered_keyword)
+    if index == -1:
+        return ""
+    return text[index + len(keyword) :].strip(" \t\n\r'\".,:;!?")
+
+
+def _pick_string_value(
+    text: str,
+    parameter_name: str,
+    quoted_values: list[str],
+) -> str:
+    """Infer a string argument using simple prompt heuristics."""
+    lowered_text = text.lower()
+    lowered_name = parameter_name.lower()
+
+    if lowered_name == "name":
+        words = _normalize_words(text)
+        if words and words[0] in {"greet", "hello", "hi"} and len(words) > 1:
+            return words[1]
+        if quoted_values:
+            return quoted_values[0]
+        return text.strip()
+
+    if any(token in lowered_name for token in {"source", "text", "input", "s"}):
+        if quoted_values:
+            if len(quoted_values) > 1:
+                return quoted_values[-1]
+            return quoted_values[0]
+        return text.strip()
+
+    if any(token in lowered_name for token in {"replacement", "replace", "value"}):
+        fragment = _extract_text_after_keyword(text, "with")
+        if fragment:
+            return fragment.split()[0].strip("\"'.,:;!?")
+        if len(quoted_values) >= 2:
+            return quoted_values[1]
+        if quoted_values:
+            return quoted_values[0]
+        return text.strip()
+
+    if any(token in lowered_name for token in {"regex", "pattern"}):
+        if "numbers" in lowered_text or "digits" in lowered_text:
+            return r"\\d+"
+        if "vowels" in lowered_text:
+            return r"[aeiouAEIOU]"
+        if quoted_values:
+            return quoted_values[0]
+        return text.strip()
+
+    if quoted_values:
+        return quoted_values[0]
+
+    for keyword in ("with", "for", "of", "in", "to", "called", "named"):
+        fragment = _extract_text_after_keyword(text, keyword)
+        if fragment:
+            return fragment
+
+    return text.strip()
+
+
+def _pick_number_value(
+    text: str,
+    parameter_name: str,
+    numbers: list[int | float],
+    used_count: int,
+) -> tuple[int | float, int]:
+    """Infer a numeric argument using prompt structure and parameter names."""
+    lowered_name = parameter_name.lower()
+    words = _normalize_words(text)
+
+    if "return" in lowered_name and numbers:
+        return numbers[-1], used_count
+
+    if lowered_name in {"cost", "price", "amount", "investment"}:
+        for keyword in ("cost", "returns", "return", "investment"):
+            fragment = _extract_text_after_keyword(text, keyword)
+            fragment_numbers = _extract_numbers(fragment)
+            if fragment_numbers:
+                return fragment_numbers[0], used_count
+
+    if used_count < len(numbers):
+        return numbers[used_count], used_count + 1
+
+    if "first" in words and numbers:
+        return numbers[0], used_count
+
+    return 0, used_count
+
+
+def build_parameters(
+    text: str,
+    function_definition: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Extract function parameters from the natural language prompt."""
+    parameters = function_definition.get("parameters", {})
+    numbers = _extract_numbers(text)
+    quoted_values = _extract_quoted_values(text)
+    parameters_result: Dict[str, Any] = {}
+    used_number_count = 0
+
+    for parameter_name, parameter_definition in parameters.items():
+        parameter_type = parameter_definition.get("type", "string")
+
+        if parameter_type == "number":
+            value, used_number_count = _pick_number_value(
+                text, parameter_name, numbers, used_number_count
+            )
+            parameters_result[parameter_name] = value
+        elif parameter_type == "boolean":
+            lowered_text = text.lower()
+            parameters_result[parameter_name] = (
+                "false" not in lowered_text and "no" not in lowered_text
+            )
+        elif parameter_type == "string":
+            parameters_result[parameter_name] = _pick_string_value(
+                text, parameter_name, quoted_values
+            )
+        elif parameter_type == "array":
+            parameters_result[parameter_name] = []
+        elif parameter_type == "object":
+            parameters_result[parameter_name] = {}
+        else:
+            parameters_result[parameter_name] = _pick_string_value(
+                text, parameter_name, quoted_values
+            )
+
+    return parameters_result
+
+
+def score_function_match(
+    text: str,
+    function_definition: Dict[str, Any],
 ) -> int:
-    """Manage state transitions during token generation."""
-    if step == 0:
-        js.JSON_START = js.JSON_START[len(token) :]
-        return 1 if not js.JSON_START else 0
-    elif step == 1:
-        js.KEY_PROMPT = js.KEY_PROMPT[len(token) :]
-        return 2 if not js.KEY_PROMPT else 1
-    elif step == 2:
-        js.PROMPT_VALUE = js.PROMPT_VALUE[len(token) :]
-        return 3 if not js.PROMPT_VALUE else 2
-    elif step == 4:
-        js.KEY_NAME = js.KEY_NAME[len(token) :]
-        return 5 if not js.KEY_NAME else 4
-    elif step == 5:
-        clean_token = token.replace("Ġ", "")
-        Functions.list = [
-            function_name
-            for function_name in Functions.list
-            if function_name.startswith(clean_token)
-        ]
-        for i in range(len(Functions.list)):
-            Functions.list[i] = Functions.list[i][len(clean_token) :]
-        return (
-            6 if not Functions.list or any(len(f) == 0 for f in Functions.list) else 5
-        )
-    elif step == 7:
-        js.KEY_PARA = js.KEY_PARA[len(token) :]
-        return 8 if not js.KEY_PARA else 7
-    elif step == 8:
-        param_keys = list(Functions.definitions.get(js.FUNCTION or "", {}).keys())
-        current_type = (
-            (js.TYPES or [])[js.param_order]
-            if js.TYPES and js.param_order < len(js.TYPES)
-            else "string"
-        )
+    """Score how well a function matches a prompt."""
+    prompt_words = set(_normalize_words(text))
+    score = 0
 
-        if js.sub_step == 0:
-            if "{" in token:
-                js.sub_step = 1
-            elif "}" in token:
-                if not (js.TYPES) or len(js.TYPES) == 0:
-                    return 9
-        elif js.sub_step == 1 and '"' in token:
-            if js.param_order < len(param_keys):
-                js.current_key_remaining = param_keys[js.param_order]
-            js.sub_step = 2
-        elif js.sub_step == 2:
-            if js.current_key_remaining.startswith(token):
-                js.current_key_remaining = js.current_key_remaining[len(token) :]
-            if not js.current_key_remaining:
-                js.sub_step = 3
-        elif js.sub_step == 3 and '"' in token:
-            js.sub_step = 4
-        elif js.sub_step == 4 and ":" in token:
-            js.sub_step = 5
-        elif js.sub_step == 5 and "Ġ" in token:
-            js.sub_step = 6
-        elif js.sub_step == 6:
-            if current_type == "number":
-                if any(c.isdigit() for c in token) or "." in token:
-                    js.value_started = True
-                    js.number_char_count += len(token)
-                elif "," == token and js.value_started:
-                    js.param_order += 1
-                    js.sub_step = 1
-                    js.value_started = False
-                    js.string_open = False
-                    js.number_char_count = 0
-                    js.string_char_count = 0
-                elif "}" == token and js.value_started:
-                    return 9
-            else:
-                if token == '"' and not js.value_started:
-                    js.value_started = True
-                    js.string_open = True
-                elif token == '"' and js.string_open:
-                    js.string_open = False
-                elif js.string_open:
-                    js.string_char_count += len(token)
-                elif not js.string_open and js.value_started and token == ",":
-                    js.param_order += 1
-                    js.sub_step = 1
-                    js.value_started = False
-                    js.string_open = False
-                    js.number_char_count = 0
-                    js.string_char_count = 0
-                elif not js.string_open and js.value_started and token == "}":
-                    return 9
-        return 8
-    elif step == 9:
-        js.JSON_END = js.JSON_END[len(token) :]
-        return 10 if not js.JSON_END else 9
-    elif step in [3, 6]:
-        js.LINE_END = js.LINE_END[len(token) :]
-        if not js.LINE_END:
-            js.LINE_END = ",Ċĉĉ"
-            return step + 1
-        return step
-    return step
+    name_words = set(_normalize_words(function_definition.get("name", "")))
+    description = function_definition.get("description", "")
+    parameter_names = " ".join(function_definition.get("parameters", {}).keys())
+    description_words = set(_normalize_words(description))
+    parameter_words = set(_normalize_words(parameter_names))
+
+    score += len(prompt_words & name_words) * 3
+    score += len(prompt_words & description_words)
+    score += len(prompt_words & parameter_words)
+
+    for word in name_words:
+        if word and word in text.lower():
+            score += 2
+
+    return score
+
+
+def select_function_name(
+    text: str,
+    function_definitions: list[Dict[str, Any]],
+) -> str:
+    """Choose the most appropriate function name for the prompt."""
+    if not function_definitions:
+        return ""
+
+    scored_functions: list[tuple[int, str]] = []
+    for function_definition in function_definitions:
+        function_name = function_definition.get("name", "")
+        if function_name:
+            scored_functions.append(
+                (
+                    score_function_match(text, function_definition),
+                    function_name,
+                )
+            )
+
+    if not scored_functions:
+        return ""
+
+    best_score, best_name = max(scored_functions, key=lambda item: item[0])
+    if best_score > 0:
+        return best_name
+
+    return function_definitions[0].get("name", "")
 
 
 def process_prompt(
@@ -135,84 +293,27 @@ def process_prompt(
 ) -> tuple[bool, Any]:
     """Process a single prompt and generate function call."""
     try:
-        functions_class_copy = FunctionsClass(
-            functions_class.list.copy(), functions_class.definitions
+        available_definitions = [
+            functions_class.definitions[name]
+            for name in functions_class.list
+            if name in functions_class.definitions
+        ]
+        selected_function = select_function_name(text, available_definitions)
+        if not selected_function:
+            return False, {"error": "No function available"}
+
+        selected_definition = functions_class.definitions.get(
+            selected_function,
+            {},
         )
-        js: JSONState = JSONState(text, len(max(functions_class_copy.list, key=len)))
-        prompt: str = make_prompt(text, functions_class_copy.list)
-        prompt_ids: list[int] = llm.encode(prompt)[0].tolist()
-        generate_text: str = ""
 
-        cons_sampler = GrammarConstrainedSampler(grammar_valid_fn=step_json)
-        step: int = 0
-
-        print("[prompt] generating tokens")
-
-        max_generation_steps = 1200
-        generation_count = 0
-
-        while step < 10:
-            generation_count += 1
-            if generation_count > max_generation_steps:
-                return False, {"error": "Generation limit reached"}
-
-            logits: list[float] = llm.get_logits_from_input_ids(prompt_ids)
-            logits_array = np.array(logits)
-            index_max = cons_sampler.constrained_sample(
-                js, logits_array, text, prompt, functions_class_copy, step, vocab
-            )
-
-            next_token = inverse_vocab.get(index_max, "")
-
-            if not next_token:
-                continue
-
-            generate_text += next_token
-            prompt += next_token
-            prompt_ids.append(index_max)
-            print("<>")
-            next_step: int = new_step(text, next_token, step, js, functions_class_copy)
-            print(f"[prompt] step={step} token={next_token} " f"next_step={next_step}")
-            print("<>")
-            if next_step == 6 and step == 5:
-                js.sub_step = 0
-                js.param_order = 0
-                js.current_key_remaining = ""
-                js.value_started = False
-                js.string_open = False
-                js.number_char_count = 0
-                js.string_char_count = 0
-                js.FUNCTION = (
-                    format_text(generate_text)
-                    .split('"name": "')[-1]
-                    .replace('"', "")
-                    .strip()
-                )
-                print("<>")
-                parameters: Dict[str, Any] = functions_class_copy.definitions.get(
-                    js.FUNCTION, {}
-                )
-                types_list: list[str] = []
-                for param in parameters:
-                    param_type = parameters.get(param, {}).get("type", "string")
-                    types_list.append(param_type)
-                js.TYPES = types_list
-                generate_text += '"'
-                prompt += '"'
-                print(f"[prompt] selected function: {js.FUNCTION}")
-
-            step = next_step
-
-        generate_text = format_text(generate_text)
-        print(f"[prompt] generated text: {generate_text}")
-        is_valid, _ = valid_js(generate_text)
-
-        if not is_valid:
-            print("[prompt] invalid JSON generated")
-            return False, {"error": "Invalid JSON generated"}
-
-        result = json.loads(generate_text)
-        print("[prompt] valid JSON generated")
+        result = {
+            "prompt": text,
+            "name": selected_function,
+            "parameters": build_parameters(text, selected_definition),
+        }
+        print(f"[prompt] selected function: {selected_function}")
+        print(f"[prompt] generated result: {result}")
         return True, result
     except Exception as e:
         print(f"[prompt] error: {e}")
@@ -284,7 +385,7 @@ def main() -> None:
         sys.exit(1)
 
     names = [f.get("name") for f in functions_data]
-    defs = {f["name"]: f.get("parameters", {}) for f in functions_data}
+    defs = {f["name"]: f for f in functions_data if isinstance(f, dict) and "name" in f}
     functions_class = FunctionsClass(names, defs)
     print(f"[main] loaded {len(names)} functions")
 

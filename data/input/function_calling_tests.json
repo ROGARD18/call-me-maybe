@@ -18,6 +18,9 @@
     "prompt": "Reverse the string 'world'"
   },
   {
+    "prompt": "Sort the string '54876924'"
+  },
+  {
     "prompt": "What is the square root of 16?"
   },
   {
@@ -31,5 +34,11 @@
   },
   {
     "prompt": "Substitute the word 'cat' with 'dog' in 'The cat sat on the mat with another cat'"
+  },
+  {
+    "prompt": "What is 4 multiplied by 5?"
+  },
+  {
+    "prompt": "What is the ROI of an investment that costs $1000 and returns $1500?"
   }
 ]
