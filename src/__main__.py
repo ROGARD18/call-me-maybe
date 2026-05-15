@@ -19,58 +19,60 @@ def format_text(text: str) -> str:
 def new_step(
     text: str, token: str, step: int, js: JSONState, Functions: FunctionsClass
 ) -> int:
+    print(f"step = {step}")
     if step == 0:
-        js.JSON_START = js.JSON_START[len(token) :]
-        if not (js.JSON_START):
-            return 1
+        js.JSON_START = js.JSON_START[len(token):]
+        return 1 if not js.JSON_START else 0
     elif step == 1:
-        js.KEY_PROMPT = js.KEY_PROMPT[len(token) :]
-        if not (js.KEY_PROMPT):
-            return 2
+        js.KEY_PROMPT = js.KEY_PROMPT[len(token):]
+        return 2 if not js.KEY_PROMPT else 1
     elif step == 2:
-        js.PROMPT_VALUE = js.PROMPT_VALUE[len(token) :]
-        if not (js.PROMPT_VALUE):
-            return 3
+        js.PROMPT_VALUE = js.PROMPT_VALUE[len(token):]
+        return 3 if not js.PROMPT_VALUE else 2
     elif step == 4:
-        js.KEY_NAME = js.KEY_NAME[len(token) :]
-        if not (js.KEY_NAME):
-            return 5
+        js.KEY_NAME = js.KEY_NAME[len(token):]
+        return 5 if not js.KEY_NAME else 4
     elif step == 5:
-        Functions.list = [f for f in Functions.list if f.startswith(token)]
+        clean_token = token.replace("Ġ", "")
+        Functions.list = [f for f in Functions.list
+                          if f.startswith(clean_token)]
         for i in range(len(Functions.list)):
-            Functions.list[i] = Functions.list[i][len(token) :]
-        if any(len(f) == 0 for f in Functions.list):
-            return 6
+            Functions.list[i] = Functions.list[i][len(clean_token):]
+        return 6 if any(len(f) == 0 for f in Functions.list) else 5
     elif step == 7:
-        js.KEY_PARA = js.KEY_PARA[len(token) :]
-        if not (js.KEY_PARA):
-            return 8
+        js.KEY_PARA = js.KEY_PARA[len(token):]
+        return 8 if not js.KEY_PARA else 7
     elif step == 8:
+        print(f"sub_STEP = {js.sub_step}")
         if js.sub_step == 0 and "{" in token:
             js.sub_step = 1
         elif js.sub_step == 1 and '"' in token:
             js.sub_step = 2
-        elif js.sub_step == 2:  # On attend la fin du nom
+        elif js.sub_step == 2:
             js.sub_step = 3
         elif js.sub_step == 3 and '"' in token:
             js.sub_step = 4
-        elif js.sub_step == 4 and ':' in token:
+        elif js.sub_step == 4 and ":" in token:
             js.sub_step = 5
-        elif js.sub_step == 5:
+        elif js.sub_step == 5 and "Ġ" in token:
+            js.sub_step = 6
+        elif js.sub_step == 6:
             if "," in token:
                 js.param_order += 1
-                js.sub_step = 1  # Retour à la clé suivante
-            if "}" in token:
+                if not js.param_order == len(js.TYPES):
+                    js.sub_step = 1
+            elif "}" in token:
                 return 9
+        return 8
     elif step == 9:
-        js.JSON_END = js.JSON_END[len(token) :]
-        if not (js.JSON_END):
-            return 10
-    elif step == 3 or step == 6:
-        js.LINE_END = js.LINE_END[len(token) :]
-        if not (js.LINE_END):
+        js.JSON_END = js.JSON_END[len(token):]
+        return 10 if not js.JSON_END else 9
+    elif step in [3, 6]:
+        js.LINE_END = js.LINE_END[len(token):]
+        if not js.LINE_END:
             js.LINE_END = ",Ċĉĉ"
             return step + 1
+        return step
     return step
 
 
@@ -113,6 +115,8 @@ def main() -> None:
         prompt += next_token
         next_step: int = new_step(text, next_token, step, js, Functions)
         if next_step == 6 and step == 5:
+            js.sub_step = 0
+            js.param_order = 0
             js.FUNCTION = (
                 format_text(generate_text)
                 .split('"name": "')[-1]

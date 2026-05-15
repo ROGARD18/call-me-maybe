@@ -17,7 +17,7 @@ class FinalResult(BaseModel):
 class JSONState:
     def __init__(self, text: str, function_len: int):
         self.JSON_START = "[Ċĉ{Ċĉĉ"
-        self.JSON_END = "Ċĉ}]"
+        self.JSON_END = "Ċĉ}Ċ]"
         self.LINE_END = ",Ċĉĉ"
         self.KEY_PROMPT = '"prompt":Ġ"'
         self.PROMPT_VALUE = (

@@ -7,5 +7,4 @@ def get_functions() -> tuple[list, dict]:
         data = json.load(file)
     names = [f.get('name') for f in data]
     defs = {f['name']: f.get('parameters', {}) for f in data}
-    print("DEFS ==", defs)
     return names, defs

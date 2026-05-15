@@ -1,136 +1,91 @@
 import numpy as np
-from src.class_ import JSONState, FunctionsClass
+from src.class_ import JSONState
 
 
 class GrammarConstrainedSampler:
     def __init__(self, grammar_valid_fn) -> None:
         self.grammar_valid_fn = grammar_valid_fn
 
-    @staticmethod
-    def make_set(text: str, step: int) -> set:
-        if step == 8:
-            return set(text + '"')
-        return set()
-
     def constrained_sample(
-        self,
-        js: JSONState,
-        logits: np.ndarray,
-        text: str,
-        prompt: str,
-        Functions: FunctionsClass,
-        step: int,
-        vocab: dict[int, str],
+        self, js, logits, text, prompt, Functions, step, vocab
     ) -> int:
-        alphabet: str = "abcdefghijklmnopqrstuvwxyz"
         target_string = self.grammar_valid_fn(step, js)
-        print("Target ->", target_string)
-        print("step =", step)
         is_allowed = np.zeros(len(logits), dtype=bool)
 
         if step == 5:
-            is_allowed.fill(False)
-
             for char, id_ in vocab.items():
-                clean_token = char.replace("Ġ", "")
-                if not clean_token:
-                    continue
-
-                if any(func.startswith(clean_token) for func in Functions.list):
+                clean = char.replace("Ġ", "").replace("Ċ", "").replace("ĉ", "")
+                if clean and any(f.startswith(clean) for f in Functions.list):
                     is_allowed[id_] = True
+
         elif step == 8:
             is_allowed.fill(False)
+            params_keys = list(Functions.definitions.get(js.FUNCTION,
+                                                         {}).keys())
 
-            # params_keys = list(Functions.definitions.get(js.FUNCTION, {}).keys())
-            current_letter = alphabet[js.param_order]
-            current_type = (
-                js.TYPES[js.param_order]
-                if js.TYPES and js.param_order < len(js.TYPES)
-                else "string"
-            )
-            print("SUB_STEP ==", js.sub_step)
-            for char, id_ in vocab.items():
+            if js.param_order >= len(js.TYPES):
+                if "}" in vocab:
+                    is_allowed[vocab["}"]] = True
+                    masked_logits = np.where(is_allowed, logits, -1e10)
+                    return int(
+                        np.random.choice(len(logits),
+                                         p=self._softmax(masked_logits))
+                    )
+            else:
+                current_letter = params_keys[js.param_order]
+                current_type = js.TYPES[js.param_order]
 
-                if js.sub_step == 0:
-                    if char == "{":
-                        is_allowed[id_] = True
-                        break
-
-                elif js.sub_step == 1 or js.sub_step == 3:
-                    if char == '"':
-                        is_allowed[id_] = True
-                        break
-
-                elif js.sub_step == 2:
-                    if char == current_letter:
-                        is_allowed[id_] = True
-                        break
-
-                elif js.sub_step == 4:
-                    if char == ":":
-                        is_allowed[id_] = True
-                        break
-
-                elif js.sub_step == 5:
-                    number: list = [
-                        "0",
-                        "1",
-                        "2",
-                        "3",
-                        "4",
-                        "5",
-                        "6",
-                        "7",
-                        "8",
-                        "9",
-                        ".",
-                    ]
-                    number = [n for n in number if n in text]
-                    if current_type == "number":
-                        if all(c in number for c in char) and char != "":
+                for char, id_ in vocab.items():
+                    if js.sub_step == 0:
+                        if char == "{":
                             is_allowed[id_] = True
-                    else:
-                        if all(c in text + '"' for c in char):
+                    if js.sub_step == 1 or js.sub_step == 3:
+                        if char == '"':
                             is_allowed[id_] = True
+                    elif js.sub_step == 2:
+                        if char == current_letter:
+                            is_allowed[id_] = True
+                            is_allowed[id_] = True
+                    elif js.sub_step == 4:
+                        if char == ":":
+                            is_allowed[id_] = True
+                    elif js.sub_step == 5 or js.sub_step == -1:
+                        if char == "Ġ":
+                            is_allowed[id_] = True
+                    elif js.sub_step == 6:
+                        if js.param_order == len(js.TYPES):
+                            if "{" == char:
+                                is_allowed[id_] = True
+                        elif "," == char:
+                            is_allowed[id_] = True
+                        if current_type == "number":
+                            valid_nums = "0123456789."
+                            if all(c in valid_nums for c in char):
+                                is_allowed[id_] = True
+                        else:
+                            if all(c in text + '"' for c in char):
+                                is_allowed[id_] = True
 
-                    if char in ["}", ","]:
-                        is_allowed[id_] = True
-
-        elif target_string == "":
-            set_char = self.make_set(text, step)
-            print(f"setchar == {set_char}")
-            for char, id_ in vocab.items():
-                clean_char = (
-                    char.replace("Ġ", " ").replace("Ċ", "\n").replace("ĉ", "\t")
-                )
-                if "," in clean_char or "." in clean_char:
-                    continue
-                elif clean_char and all(c in set_char for c in clean_char):
-                    is_allowed[id_] = True
-        else:
+        elif target_string != "":
             for char, id_ in vocab.items():
                 if target_string.startswith(char):
                     is_allowed[id_] = True
+        else:
+            is_allowed.fill(True)
 
         if not np.any(is_allowed):
-            print("---------------")
             return int(np.argmax(logits))
 
         masked_logits = np.where(is_allowed, logits, -1e10)
-        probs = self._softmax(masked_logits)
-        return int(np.random.choice(len(probs), p=probs))
+        return int(np.random.choice(len(logits),
+                                    p=self._softmax(masked_logits)))
 
-    def _softmax(self, x: np.ndarray) -> np.ndarray:
+    def _softmax(self, x):
         e_x = np.exp(x - np.max(x))
-        sum_e_x = e_x.sum()
-        if sum_e_x == 0:
-            return np.ones(len(x)) / len(x)
-        out = e_x / (sum_e_x + 1e-12)
-        return np.nan_to_num(out, nan=1.0 / len(x))
+        return e_x / (e_x.sum() + 1e-12)
 
 
 def step_json(step: int, js: JSONState) -> str:
-    # print("step =", step)
     if step == 0:
         return js.JSON_START
     elif step == 1:
@@ -145,8 +100,6 @@ def step_json(step: int, js: JSONState) -> str:
         return js.LINE_END
     elif step == 7:
         return js.KEY_PARA
-    # elif step == 8:
-    #     return (set(get))
     elif step == 9:
         return js.JSON_END
     return ""
