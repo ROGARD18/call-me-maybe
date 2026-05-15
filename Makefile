@@ -8,6 +8,7 @@ run:
 	@uv run python -m $(SRCDIR)
 
 debug:
+	@uv run python -m pdb -m $(SRCDIR)
 
 clean:
 	@rm -f $(OUTPUT_FILE)
