@@ -12,8 +12,10 @@ def make_prompt(text: str, functions: List[str]) -> str:
         Formatted prompt string
     """
     return (
-        "Pick exactly one function name from the list below for the user request. "
-        "Do not explain your choice and do not add any extra text. "
+        "Pick exactly one function name from the list "
+        "below for the user request. "
+        "Do not explain your choice and do not add any "
+        "extra text. "
         f"Request: {text}. "
         f"Function names: {functions}."
     )

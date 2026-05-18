@@ -1,4 +1,4 @@
-*This project has been created as part of the 42 curriculum by rogard-antoine.*
+*This project has been created as part of the 42 curriculum by anrogard.*
 
 ## Description
 
@@ -21,6 +21,7 @@ Instead of answering the question directly, the system provides the correct func
 ### Key Innovation: Constrained Decoding
 
 Unlike traditional LLM prompting which achieves only ~30% JSON validity with small models, this system guarantees **100% valid JSON output** through token-by-token constrained decoding. Each generated token respects both:
+
 - **Structural constraints**: Valid JSON syntax at all times
 - **Semantic constraints**: Allowed function names and parameter types based on schema
 
@@ -42,11 +43,13 @@ make install
 ### Running the Program
 
 Basic usage:
+
 ```bash
 uv run python -m src
 ```
 
 With custom file paths:
+
 ```bash
 uv run python -m src \
   --functions_definition data/input/functions_definition.json \
@@ -87,16 +90,59 @@ Step 9:  JSON array close: ]
 Step 10: Terminal state
 ```
 
+### LLM SDK Methods
+
+The system uses the following methods from the `Small_LLM_Model` SDK:
+
+- **`get_logits_from_input_ids(input_ids: Tensor) -> Tensor`**
+
+  - Takes a tensor of token IDs and returns raw logits (probability scores) for the next token
+  - Core method for constrained decoding: allows intervention on logits before token selection
+  - Usage: Apply masking to set invalid tokens to -∞
+- **`get_path_to_vocabulary_json() -> str`**
+
+  - Returns the path to a JSON file mapping token IDs to token strings
+  - Essential for determining which tokens represent valid JSON structure, function names, and parameters
+  - Usage: Load vocabulary to identify allowed tokens at each generation step
+- **`encode(text: str) -> List[int]`** (helper, optional)
+
+  - Converts a text string into token IDs using the model's tokenizer
+  - Used for initialization and prompt encoding only
+- **`decode(token_ids: List[int]) -> str`** (helper, optional)
+
+  - Converts token IDs back to text (rarely used in constrained decoding)
+
+**Critical design principle**: Main generation logic uses `get_logits_from_input_ids()` and `get_path_to_vocabulary_json()` for complete token-level control. Direct calls to `encode()` and `decode()` are minimized in core algorithm.
+
+### The Generation Pipeline (6 Steps)
+
+The LLM generates output through a repeating cycle:
+
+1. **Prompt**: Natural language input (e.g., "What is the sum of 2 and 3?")
+2. **Tokenization**: Text split into subword tokens using the model's tokenizer
+   - Example: `["What", "Ġis", "Ġthe", "Ġsum", "Ġof", "Ġ2", "Ġand", "Ġ3", "?"]` (Ġ = space)
+3. **Input IDs**: Tokens converted to numerical indices (e.g., `[892, 318, 262, 4771, ...]`)
+4. **LLM Processing**: Neural network processes token IDs and computes attention
+5. **Logits**: Model outputs probability scores for ~50K possible next tokens
+6. **Token Selection**: Next token chosen (highest probability, or constrained to valid set)
+
+This cycle repeats: each generated token is appended, and steps 2-6 repeat until generation completes.
+
 ### Constrained Decoding Mechanism
 
-1. **Token-by-token generation**: At each step, the model produces logits for ~50K possible tokens
-2. **Grammar validation**: We identify which tokens maintain valid structure for the current step
-3. **Masking**: Invalid tokens get logits set to -∞, making them impossible to select
-4. **Sampling**: Only valid tokens can be selected, guaranteeing 100% structural validity
+Unlike standard sampling, constrained decoding intervenes at step 5 (Logits):
+
+1. **Grammar validation**: Identify which tokens maintain valid JSON structure for current step
+2. **Schema validation**: Ensure tokens comply with function definitions (valid function names, parameter types)
+3. **Logit masking**: Set invalid token logits to -∞ (impossible to select)
+4. **Sampling**: Only valid tokens can be selected, guaranteeing 100% structural + semantic validity
+
+**Vocabulary mapping is critical**: Use `get_path_to_vocabulary_json()` to map token IDs to strings, determining which tokens are valid at each step.
 
 ### Function Selection (Step 5)
 
 Unlike heuristic approaches, the LLM actively selects which function to call:
+
 - Available functions are provided as candidate tokens
 - Model's output logits determine probability of each function
 - Constrained sampling ensures selection of a valid function only
@@ -104,10 +150,12 @@ Unlike heuristic approaches, the LLM actively selects which function to call:
 ### Parameter Handling (Step 8)
 
 Parameters are constructed with sub-steps that enforce type constraints:
+
 - **number**: Only digits and decimal point allowed
 - **string**: Only characters valid within JSON strings allowed
 
 Each parameter must:
+
 1. Have a valid key name (from function definition)
 2. Have correct type according to schema
 3. Be properly quoted and delimited
@@ -120,7 +168,8 @@ Each parameter must:
 
 **Decision**: Use the LLM's vocabulary JSON directly instead of encoding strings token-by-token.
 
-**Rationale**: 
+**Rationale**:
+
 - Ensures perfect alignment between constrained decoding logic and actual tokenizer
 - Avoids off-by-one errors from approximating tokenization
 - Vocabulary file is authoritative source of truth
@@ -130,6 +179,7 @@ Each parameter must:
 **Decision**: JSONState object tracks all generation state separately from main loop.
 
 **Rationale**:
+
 - Enables easy debugging and step-by-step validation
 - Allows stateless token sampling (pure function from state + logits → decision)
 - Supports batching and parallel processing
@@ -139,6 +189,7 @@ Each parameter must:
 **Decision**: For each prompt, create independent FunctionsClass with filtered function list.
 
 **Rationale**:
+
 - Reduces confusion for LLM by removing irrelevant functions
 - Improves reliability for multi-function scenarios
 - Simplifies constrained sampling logic
@@ -148,6 +199,7 @@ Each parameter must:
 **Decision**: Force JSON structure through grammar, not model behavior.
 
 **Rationale**:
+
 - Model never needs to "learn" JSON format
 - Works with any model size/training data
 - Achieves consistency impossible with prompting alone
@@ -157,21 +209,25 @@ Each parameter must:
 ## Performance Analysis
 
 ### Accuracy
+
 - **Function selection**: >95% correct function identification
 - **Parameter extraction**: >90% correct type and value matching
 - **JSON validity**: 100% (by design)
 
 ### Speed
+
 - Single prompt: ~2-3 seconds (LLM inference dominated)
 - Batch of 100 prompts: ~4-6 minutes
 - Bottleneck: LLM forward passes (not decoding logic)
 
 ### Memory Usage
+
 - Model: ~2.5GB (fp16, Qwen3-0.6B)
 - Vocabulary: ~100MB
 - Per-prompt state: <1MB
 
 ### Reliability
+
 - No crashes on edge cases (empty strings, special characters, etc.)
 - Graceful error handling for malformed input files
 - No constraint violations (100% JSON validity maintained)
@@ -239,6 +295,7 @@ Each parameter must:
 ### Manual Validation
 
 Spot-check generated JSON against function definitions:
+
 ```bash
 python -c "import json; f=open('data/output/function_calling_results.json'); data=json.load(f); print(f'Valid JSON, {len(data)} results')"
 ```
@@ -248,16 +305,19 @@ python -c "import json; f=open('data/output/function_calling_results.json'); dat
 ## Technical Choices
 
 ### Why Pydantic for Validation?
+
 - Strong type checking for class definitions
 - Automatic validation on initialization
 - Clear error messages for debugging
 
 ### Why NumPy for Logits Manipulation?
+
 - Efficient masking operations: `np.where(is_allowed, logits, -1e10)`
 - Softmax calculation: `np.exp(x - np.max(x))`
 - Performance critical for 50K-token vocabulary
 
 ### Why Not Use Transformers Directly?
+
 - Project constraints forbid it
 - Custom tokenizer implementation teaches deeper understanding
 - Demonstrates constrained decoding principles clearly
@@ -267,6 +327,7 @@ python -c "import json; f=open('data/output/function_calling_results.json'); dat
 ## Example Usage
 
 ### Input File: `function_calling_tests.json`
+
 ```json
 [
   {"prompt": "What is the sum of 2 and 3?"},
@@ -276,6 +337,7 @@ python -c "import json; f=open('data/output/function_calling_results.json'); dat
 ```
 
 ### Function Definitions: `functions_definition.json`
+
 ```json
 [
   {
@@ -300,6 +362,7 @@ python -c "import json; f=open('data/output/function_calling_results.json'); dat
 ```
 
 ### Output File: `function_calling_results.json`
+
 ```json
 [
   {
@@ -325,16 +388,19 @@ python -c "import json; f=open('data/output/function_calling_results.json'); dat
 ## Resources
 
 ### Key References
+
 - **Constrained Decoding**: [Outlines: A High-Level Framework for LLM Text Generation](https://github.com/outlines-ai/outlines)
 - **Grammar-Guided Decoding**: [Lexi - LLM Structured Output](https://lexi.ai/)
 - **Transformers**: [Hugging Face Transformers Documentation](https://huggingface.co/docs/transformers/)
 - **Qwen Model**: [Qwen3 Model Card](https://huggingface.co/Qwen/Qwen3-0.6B)
 
 ### Tokenization Concepts
+
 - Byte Pair Encoding (BPE): Understanding subword tokenization
 - Special tokens and their meanings in different vocabularies
 
 ### Structured Output from LLMs
+
 - JSON Schema validation patterns
 - State machine design for deterministic generation
 
@@ -343,25 +409,7 @@ python -c "import json; f=open('data/output/function_calling_results.json'); dat
 **AI was NOT used for core algorithm implementation.**
 
 However, AI assisted in:
+
 1. **Code structure review**: Verifying state machine logic correctness
 2. **Type hints and documentation**: Ensuring mypy compliance
-3. **Testing strategy**: Designing edge case scenarios
-4. **README organization**: Structuring complex technical concepts
-
-**Parts implemented manually**:
-- Constrained sampling logic (novel implementation)
-- Token-by-token grammar validation
-- State transition machine
-- Error handling framework
-- All core LLM integration
-
----
-
-## Author Notes
-
-This project demonstrates a fundamental principle: **constraints beat scale**. A 0.6B parameter model with proper structural guidance outperforms larger models given only prompting. This has practical implications for:
-- On-device inference (privacy, latency)
-- Cost reduction in production systems
-- Reliability guarantees in mission-critical applications
-
-The constrained decoding approach is production-ready and has been successfully deployed in real systems for reliable structured extraction from LLM outputs.
+3. **README organization**: Structuring complex technical concepts

@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 import numpy as np
 
-from llm_sdk import Small_LLM_Model
+from llm_sdk import Small_LLM_Model  # type: ignore[attr-defined]
 from src.class_ import FunctionsClass
 from src.vocab_dict import make_vocab_dict
 
@@ -112,7 +112,7 @@ def _extract_text_after_keyword(text: str, keyword: str) -> str:
     index = lowered_text.find(lowered_keyword)
     if index == -1:
         return ""
-    return text[index + len(keyword) :].strip(" \t\n\r'\".,:;!?")
+    return text[index + len(keyword):].strip(" \t\n\r'\".,:;!?")
 
 
 def _pick_string_value(
@@ -185,7 +185,8 @@ def _pick_string_value(
             return quoted_values[0]
         return text.strip()
 
-    if any(token in lowered_name for token in {"replacement", "replace", "value"}):
+    tokens = {"replacement", "replace", "value"}
+    if any(token in lowered_name for token in tokens):
         fragment = _extract_text_after_keyword(text, "with")
         if fragment:
             return fragment.split()[0].strip("\"'.,:;!?")
@@ -416,7 +417,8 @@ def load_json_file(file_path: str) -> Dict[str, Any] | list[Any] | None:
             print(f"Error: File not found: {file_path}", file=sys.stderr)
             return None
         with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
+            result: Dict[str, Any] | list[Any] | Any = json.load(f)
+            return result
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON in {file_path}: {e}", file=sys.stderr)
         return None
@@ -442,7 +444,8 @@ def main() -> None:
     """Main entry point with argument parsing."""
     print("[main] starting")
     parser = argparse.ArgumentParser(
-        description=("Function calling system using LLM with constrained decoding")
+        description=("Function calling system using LLM "
+                     "with constrained decoding")
     )
     parser.add_argument(
         "--functions_definition",
@@ -468,12 +471,14 @@ def main() -> None:
 
     # Load function definitions
     print("[main] loading function definitions")
-    functions_data = load_json_file(args.functions_definition)
-    if functions_data is None:
+    f_data: Dict[Any, Any] | list[Any] | None = load_json_file(
+        args.functions_definition)
+    if f_data is None:
         sys.exit(1)
 
-    names = [f.get("name") for f in functions_data]
-    defs = {f["name"]: f for f in functions_data if isinstance(f, dict) and "name" in f}
+    names = [f.get("name") for f in f_data]
+    defs = {f["name"]: f for f in f_data
+            if isinstance(f, dict) and "name" in f}
     functions_class = FunctionsClass(list=names, definitions=defs)
     print(f"[main] loaded {len(names)} functions")
 
@@ -499,14 +504,18 @@ def main() -> None:
         print(f"[main] vocab size: {len(vocab)}")
     except Exception as e:
         error_message = str(e).lower()
-        if "cuda out of memory" in error_message or "out of memory" in error_message:
+        cuda_error = "cuda out of memory" in error_message
+        mem_error = "out of memory" in error_message
+        if cuda_error or mem_error:
             print(
-                "Warning: CUDA memory is not available, falling back to CPU.",
+                "Warning: CUDA memory is not available, "
+                "falling back to CPU.",
                 file=sys.stderr,
             )
             try:
                 llm = Small_LLM_Model(device="cpu")
-                vocab = make_vocab_dict(llm.get_path_to_vocabulary_json())
+                path_to_vocab = llm.get_path_to_vocabulary_json()
+                vocab = make_vocab_dict(path_to_vocab)
                 inverse_vocab = {int(v): k for k, v in vocab.items()}
             except Exception as fallback_error:
                 print(

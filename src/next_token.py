@@ -1,4 +1,4 @@
-from typing import Callable, Dict
+from typing import Callable, Dict, Any
 
 import numpy as np
 
@@ -8,7 +8,10 @@ from src.class_ import FunctionsClass, JSONState
 class GrammarConstrainedSampler:
     """Constrained sampling to enforce grammar rules during generation."""
 
-    def __init__(self, grammar_valid_fn: Callable[[int, JSONState], str]) -> None:
+    def __init__(
+        self,
+        grammar_valid_fn: Callable[[int, JSONState], str],
+    ) -> None:
         self.grammar_valid_fn = grammar_valid_fn
 
     def constrained_sample(
@@ -38,7 +41,9 @@ class GrammarConstrainedSampler:
             has_opened_brace = "{" in prompt
 
             for char, id_ in vocab.items():
-                cleaned = char.replace("Ġ", "").replace("Ċ", "").replace("ĉ", "")
+                cleaned = char.replace("Ġ", "")
+                cleaned = cleaned.replace("Ċ", "")
+                cleaned = cleaned.replace("ĉ", "")
 
                 # If not opened yet, prioritize opening brace
                 if not has_opened_brace:
@@ -52,7 +57,8 @@ class GrammarConstrainedSampler:
                         char in '{}": ,.'
                         or char == "Ġ"
                         or (
-                            cleaned and all(c.isalnum() or c in "-_ ." for c in cleaned)
+                            cleaned and all(c.isalnum() or c in "-_ ."
+                                            for c in cleaned)
                         )
                     ):
                         is_allowed[id_] = True
@@ -63,7 +69,12 @@ class GrammarConstrainedSampler:
                 is_allowed.fill(True)
 
             masked_logits = np.where(is_allowed, logits, -1e10)
-            return int(np.random.choice(len(logits), p=self._softmax(masked_logits)))
+            return int(
+                np.random.choice(
+                    len(logits),
+                    p=self._softmax(masked_logits),
+                )
+            )
 
         elif target_string != "":
             for char, id_ in vocab.items():
@@ -76,28 +87,33 @@ class GrammarConstrainedSampler:
             return int(np.argmax(logits))
 
         masked_logits = np.where(is_allowed, logits, -1e10)
-        return int(np.random.choice(len(logits), p=self._softmax(masked_logits)))
+        return int(
+            np.random.choice(
+                len(logits),
+                p=self._softmax(masked_logits),
+            )
+        )
 
-    def _softmax(self, x: np.ndarray) -> np.ndarray:
+    def _softmax(self, x: np.ndarray) -> Any:
         e_x: np.ndarray = np.exp(x - np.max(x))
         return e_x / (e_x.sum() + 1e-12)
 
 
 def step_json(step: int, js: JSONState) -> str:
     if step == 0:
-        return js.JSON_START
+        return str(js.JSON_START)
     if step == 1:
-        return js.KEY_PROMPT
+        return str(js.KEY_PROMPT)
     if step == 2:
-        return js.PROMPT_VALUE
+        return str(js.PROMPT_VALUE)
     if step == 3:
-        return js.LINE_END
+        return str(js.LINE_END)
     if step == 4:
-        return js.KEY_NAME
+        return str(js.KEY_NAME)
     if step == 6:
-        return js.LINE_END
+        return str(js.LINE_END)
     if step == 7:
-        return js.KEY_PARA
+        return str(js.KEY_PARA)
     if step == 9:
-        return js.JSON_END
+        return str(js.JSON_END)
     return ""
