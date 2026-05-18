@@ -1,1 +1,0 @@
-text -> ids -> logit (list probo token)
