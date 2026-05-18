@@ -136,7 +136,8 @@ def _pick_string_value(
         for keyword in ("file at", "read ", "path", "file"):
             fragment = _extract_text_after_keyword(text, keyword)
             if fragment:
-                return fragment.split(" with ")[0].strip()
+                cleaned_fragment = fragment.split(" with ")[0].strip()
+                return cleaned_fragment.strip("\"'.,:;!?")
         return text.strip()
 
     if lowered_name == "encoding":
@@ -156,7 +157,7 @@ def _pick_string_value(
             return quoted_values[0]
         fragment = _extract_text_after_keyword(text, "query")
         if fragment:
-            return fragment.split(" on ")[0].strip()
+            return fragment.split(" on ")[0].strip().strip("\"'.,:;!?")
         return text.strip()
 
     if lowered_name == "database":
@@ -164,7 +165,7 @@ def _pick_string_value(
         if not fragment:
             fragment = _extract_text_after_keyword(text, "on")
         if fragment:
-            return fragment.replace(" database", "").strip()
+            return fragment.replace(" database", "").strip().strip("\"'.,:;!?")
         return text.strip()
 
     if lowered_name == "template":
@@ -233,6 +234,12 @@ def _pick_number_value(
             fragment_numbers = _extract_numbers(fragment)
             if fragment_numbers:
                 return fragment_numbers[0], used_count
+
+    if lowered_name == "years":
+        years_text = _extract_text_after_keyword(text, "for")
+        fragment_numbers = _extract_numbers(years_text)
+        if fragment_numbers:
+            return int(fragment_numbers[0]), used_count
 
     if used_count < len(numbers):
         return numbers[used_count], used_count + 1

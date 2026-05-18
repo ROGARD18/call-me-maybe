@@ -33,11 +33,11 @@ clean:
 	@echo "                                      * . *:   *   . * .  ."
 
 lint:
-	@flake8 .
-	@mypy . --warn-return-any --warn-unused-ignores --ignore-missing-imports --disallow-untyped-defs --check-untyped-defs
+	@python3 -m flake8 src/
+	@python3 -m mypy src/ --warn-return-any --warn-unused-ignores --ignore-missing-imports --disallow-untyped-defs --check-untyped-defs
 
 lint-strict:
-	@flake8 .
-	@mypy . --strict
+	@python3 -m flake8 src/
+	@python3 -m mypy src/ --strict
 
 .PHONY: install run debug clean lint lint-strict
