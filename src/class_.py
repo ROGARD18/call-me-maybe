@@ -1,19 +1,15 @@
-from pydantic import BaseModel
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict
 
 
-class FunctionsClass:
+class FunctionsClass(BaseModel):
     """Container for available functions and their definitions."""
 
-    def __init__(self, functions: List[str], definitions: Dict[str, Any]) -> None:
-        """Initialize functions class.
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-        Args:
-            functions: List of available function names
-            definitions: Dictionary mapping function names to their parameters
-        """
-        self.list: List[str] = functions
-        self.definitions: Dict[str, Any] = definitions
+    list: List[str]
+    definitions: Dict[str, Any]
 
 
 class FinalResult(BaseModel):
@@ -24,32 +20,39 @@ class FinalResult(BaseModel):
     parameters: Dict[str, Any]
 
 
-class JSONState:
+class JSONState(BaseModel):
     """State machine for JSON generation."""
 
-    def __init__(self, text: str, function_len: int) -> None:
-        """Initialize JSON generation state.
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-        Args:
-            text: Input prompt text
-            function_len: Maximum function name length
-        """
-        self.JSON_START: str = "[Ċĉ{Ċĉĉ"
-        self.JSON_END: str = "Ċĉ}Ċ]"
-        self.LINE_END: str = ",Ċĉĉ"
-        self.KEY_PROMPT: str = '"prompt":Ġ"'
+    JSON_START: str
+    JSON_END: str
+    LINE_END: str
+    KEY_PROMPT: str
+    PROMPT_VALUE: str
+    KEY_NAME: str
+    KEY_PARA: str
+    NAME_LEN: int
+    FUNCTION: Optional[str] = None
+    TYPES: Optional[List[str]] = None
+    param_order: int = 0
+    sub_step: int = 0
+    current_key_remaining: str = ""
+    value_started: bool = False
+    string_open: bool = False
+    number_char_count: int = 0
+    string_char_count: int = 0
+
+    def __init__(self, text: str, function_len: int) -> None:
         escaped_text = text.replace("\\", "\\\\").replace('"', '\\"')
         escaped_text = escaped_text.replace("\t", "ĉ").replace("\n", "Ċ")
-        self.PROMPT_VALUE: str = f'{escaped_text.replace(" ", "Ġ")}"'
-        self.KEY_NAME: str = '"name":Ġ"'
-        self.KEY_PARA: str = '"parameters":Ġ'
-        self.NAME_LEN: int = function_len
-        self.FUNCTION: Optional[str] = None
-        self.TYPES: Optional[List[str]] = None
-        self.param_order: int = 0
-        self.sub_step: int = 0
-        self.current_key_remaining: str = ""
-        self.value_started: bool = False
-        self.string_open: bool = False
-        self.number_char_count: int = 0
-        self.string_char_count: int = 0
+        super().__init__(
+            JSON_START="[Ċĉ{Ċĉĉ",
+            JSON_END="Ċĉ}Ċ]",
+            LINE_END=",Ċĉĉ",
+            KEY_PROMPT='"prompt":Ġ"',
+            PROMPT_VALUE=f'{escaped_text.replace(" ", "Ġ")}"',
+            KEY_NAME='"name":Ġ"',
+            KEY_PARA='"parameters":Ġ',
+            NAME_LEN=function_len,
+        )

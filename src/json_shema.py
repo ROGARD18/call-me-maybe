@@ -1,13 +1,15 @@
-from typing import Any
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict
 
 
-# class JSONSchema:
+class JSONSchema(BaseModel):
+    """Minimal JSON schema model used for validation and constrained output."""
 
-#     type: str
-#     properties: dict[str, "JSONSchema"] | None = None
-#     requiered: list[str] | None = None
-#     items: "JSONSchema" | None = None
-#     enum: list[Any] | None = None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-
-
+    type: str
+    properties: Optional[Dict[str, "JSONSchema"]] = None
+    required: Optional[List[str]] = None
+    items: Optional["JSONSchema"] = None
+    enum: Optional[List[Any]] = None

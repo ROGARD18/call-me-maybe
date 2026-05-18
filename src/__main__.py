@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
+import numpy as np
+
 from llm_sdk import Small_LLM_Model
 from src.class_ import FunctionsClass
 from src.vocab_dict import make_vocab_dict
@@ -53,16 +55,22 @@ def _extract_numbers(text: str) -> list[int | float]:
     """Extract numbers from text without using regular expressions."""
     numbers: list[int | float] = []
     current_number = ""
+    has_digit = False
 
     for char in text:
-        if char.isdigit() or (char == "." and "." not in current_number):
+        if char.isdigit():
+            current_number += char
+            has_digit = True
+        elif char == "." and current_number and "." not in current_number:
             current_number += char
         else:
             if current_number:
-                numbers.append(_parse_number(current_number))
+                if has_digit:
+                    numbers.append(_parse_number(current_number))
                 current_number = ""
+                has_digit = False
 
-    if current_number:
+    if current_number and has_digit:
         numbers.append(_parse_number(current_number))
 
     return numbers
@@ -124,7 +132,52 @@ def _pick_string_value(
             return quoted_values[0]
         return text.strip()
 
-    if any(token in lowered_name for token in {"source", "text", "input", "s"}):
+    if lowered_name == "path":
+        for keyword in ("file at", "read ", "path", "file"):
+            fragment = _extract_text_after_keyword(text, keyword)
+            if fragment:
+                return fragment.split(" with ")[0].strip()
+        return text.strip()
+
+    if lowered_name == "encoding":
+        fragment = _extract_text_after_keyword(text, "with")
+        if fragment:
+            words = fragment.split()
+            if words and words[-1].lower() == "encoding" and len(words) > 1:
+                return words[-2].strip("\"'.,:;!?")
+            if words:
+                return words[0].strip("\"'.,:;!?")
+        if quoted_values:
+            return quoted_values[-1]
+        return text.strip()
+
+    if lowered_name == "query":
+        if quoted_values:
+            return quoted_values[0]
+        fragment = _extract_text_after_keyword(text, "query")
+        if fragment:
+            return fragment.split(" on ")[0].strip()
+        return text.strip()
+
+    if lowered_name == "database":
+        fragment = _extract_text_after_keyword(text, "on the")
+        if not fragment:
+            fragment = _extract_text_after_keyword(text, "on")
+        if fragment:
+            return fragment.replace(" database", "").strip()
+        return text.strip()
+
+    if lowered_name == "template":
+        for keyword in ("template:", "template"):
+            fragment = _extract_text_after_keyword(text, keyword)
+            if fragment:
+                return fragment
+        return text.strip()
+
+    if any(
+        token in lowered_name
+        for token in {"source", "text", "input", "body", "content"}
+    ):
         if quoted_values:
             if len(quoted_values) > 1:
                 return quoted_values[-1]
@@ -209,6 +262,11 @@ def build_parameters(
                 text, parameter_name, numbers, used_number_count
             )
             parameters_result[parameter_name] = value
+        elif parameter_type == "integer":
+            value, used_number_count = _pick_number_value(
+                text, parameter_name, numbers, used_number_count
+            )
+            parameters_result[parameter_name] = int(value)
         elif parameter_type == "boolean":
             lowered_text = text.lower()
             parameters_result[parameter_name] = (
@@ -230,27 +288,46 @@ def build_parameters(
     return parameters_result
 
 
-def score_function_match(
-    text: str,
-    function_definition: Dict[str, Any],
-) -> int:
-    """Score how well a function matches a prompt."""
-    prompt_words = set(_normalize_words(text))
-    score = 0
+def _build_selection_context(
+    prompt: str,
+    function_definitions: list[Dict[str, Any]],
+) -> str:
+    """Build the instruction prefix used to rank candidate functions."""
+    lines = [
+        "Select the best function name for the request.",
+        f"Request: {prompt}",
+        "Available functions:",
+    ]
+    for function_definition in function_definitions:
+        function_name = function_definition.get("name", "")
+        description = function_definition.get("description", "")
+        if function_name:
+            lines.append(f"- {function_name}: {description}")
 
-    name_words = set(_normalize_words(function_definition.get("name", "")))
-    description = function_definition.get("description", "")
-    parameter_names = " ".join(function_definition.get("parameters", {}).keys())
-    description_words = set(_normalize_words(description))
-    parameter_words = set(_normalize_words(parameter_names))
+    lines.append("Answer:")
+    return "\n".join(lines) + " "
 
-    score += len(prompt_words & name_words) * 3
-    score += len(prompt_words & description_words)
-    score += len(prompt_words & parameter_words)
 
-    for word in name_words:
-        if word and word in text.lower():
-            score += 2
+def _score_candidate_function(
+    context_ids: list[int],
+    function_name: str,
+    llm: Small_LLM_Model,
+) -> float:
+    """Score a function candidate using model token probabilities."""
+    if not function_name:
+        return float("-inf")
+
+    candidate_ids = llm.encode(function_name).tolist()[0]
+    generated_ids = list(context_ids)
+    score = 0.0
+
+    for token_id in candidate_ids:
+        logits = np.asarray(llm.get_logits_from_input_ids(generated_ids))
+        logits = logits - np.max(logits)
+        probabilities = np.exp(logits)
+        probabilities = probabilities / (probabilities.sum() + 1e-12)
+        score += float(np.log(probabilities[token_id] + 1e-12))
+        generated_ids.append(token_id)
 
     return score
 
@@ -258,18 +335,21 @@ def score_function_match(
 def select_function_name(
     text: str,
     function_definitions: list[Dict[str, Any]],
+    llm: Small_LLM_Model,
 ) -> str:
     """Choose the most appropriate function name for the prompt."""
     if not function_definitions:
         return ""
 
-    scored_functions: list[tuple[int, str]] = []
+    context = _build_selection_context(text, function_definitions)
+    context_ids = llm.encode(context).tolist()[0]
+    scored_functions: list[tuple[float, str]] = []
     for function_definition in function_definitions:
         function_name = function_definition.get("name", "")
         if function_name:
             scored_functions.append(
                 (
-                    score_function_match(text, function_definition),
+                    _score_candidate_function(context_ids, function_name, llm),
                     function_name,
                 )
             )
@@ -277,11 +357,8 @@ def select_function_name(
     if not scored_functions:
         return ""
 
-    best_score, best_name = max(scored_functions, key=lambda item: item[0])
-    if best_score > 0:
-        return best_name
-
-    return function_definitions[0].get("name", "")
+    _, best_name = max(scored_functions, key=lambda item: item[0])
+    return best_name
 
 
 def process_prompt(
@@ -295,10 +372,14 @@ def process_prompt(
     try:
         available_definitions = [
             functions_class.definitions[name]
-            for name in functions_class.list
+            for name in list(functions_class.list)
             if name in functions_class.definitions
         ]
-        selected_function = select_function_name(text, available_definitions)
+        selected_function = select_function_name(
+            text,
+            available_definitions,
+            llm,
+        )
         if not selected_function:
             return False, {"error": "No function available"}
 
@@ -327,7 +408,7 @@ def load_json_file(file_path: str) -> Dict[str, Any] | list[Any] | None:
         if not path.exists():
             print(f"Error: File not found: {file_path}", file=sys.stderr)
             return None
-        with open(path, "r") as f:
+        with path.open("r", encoding="utf-8") as f:
             return json.load(f)
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON in {file_path}: {e}", file=sys.stderr)
@@ -342,7 +423,7 @@ def save_results(results: list[Dict[str, Any]], output_path: str) -> bool:
     try:
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as f:
+        with path.open("w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
         return True
     except Exception as e:
@@ -386,7 +467,7 @@ def main() -> None:
 
     names = [f.get("name") for f in functions_data]
     defs = {f["name"]: f for f in functions_data if isinstance(f, dict) and "name" in f}
-    functions_class = FunctionsClass(names, defs)
+    functions_class = FunctionsClass(list=names, definitions=defs)
     print(f"[main] loaded {len(names)} functions")
 
     # Load input prompts
@@ -406,7 +487,7 @@ def main() -> None:
     try:
         print("[main] initializing LLM")
         llm = Small_LLM_Model()
-        vocab = make_vocab_dict(llm.get_path_to_vocab_file())
+        vocab = make_vocab_dict(llm.get_path_to_vocabulary_json())
         inverse_vocab: Dict[int, str] = {int(v): k for k, v in vocab.items()}
         print(f"[main] vocab size: {len(vocab)}")
     except Exception as e:
@@ -418,7 +499,7 @@ def main() -> None:
             )
             try:
                 llm = Small_LLM_Model(device="cpu")
-                vocab = make_vocab_dict(llm.get_path_to_vocab_file())
+                vocab = make_vocab_dict(llm.get_path_to_vocabulary_json())
                 inverse_vocab = {int(v): k for k, v in vocab.items()}
             except Exception as fallback_error:
                 print(

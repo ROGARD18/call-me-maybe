@@ -11,8 +11,9 @@ debug:
 	@uv run python -m pdb -m $(SRCDIR)
 
 clean:
-	@rm -f $(OUTPUT_FILE)
-	@rm -rf $$(find . -type d -name "__pycache__") $$(find . -type d -name ".mypy_cache")
+	@rm -rf data/output __pycache__ .mypy_cache
+	@find . -type d -name "__pycache__" -prune -exec rm -rf {} +
+	@find . -type d -name ".mypy_cache" -prune -exec rm -rf {} +
 	@echo "  ______   __"
 	@echo " /      \ /  |                                                _"
 	@echo "/000000  |00 |  ______    ______   _______                   //"
