@@ -2,7 +2,7 @@ from typing import Callable, Dict, Any
 
 import numpy as np
 
-from src.class_ import FunctionsClass, JSONState
+from src.models import FunctionsClass, JSONState
 
 
 class GrammarConstrainedSampler:
