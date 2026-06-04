@@ -32,7 +32,7 @@ clean:
 	@echo "                                       :: *   ..  : . *"
 	@echo "                                      * . *:   *   . * .  ."
 
-lint:
+lint:	
 	@uv run python -m flake8 src/
 	@uv run python -m mypy src/ --warn-return-any --warn-unused-ignores --ignore-missing-imports --disallow-untyped-defs --check-untyped-defs
 
