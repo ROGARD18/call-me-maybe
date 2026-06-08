@@ -5,250 +5,317 @@ from pathlib import Path
 from typing import Any, Dict
 import numpy as np
 
-from llm_sdk import Small_LLM_Model  # type: ignore[attr-defined]
+from llm_sdk import Small_LLM_Model     # type: ignore
 from src.models import FunctionsClass
 from src.vocab_dict import make_vocab_dict
 
 
-def generate_with_constraints(
-    prompt_text: str, 
-    functions_class: FunctionsClass, 
-    llm: Small_LLM_Model, 
-    vocab: Dict[str, int], 
-    inverse_vocab: Dict[int, str]
+def generate_constrained_call(
+    prompt_text: str,
+    functions_class: FunctionsClass,
+    llm: Small_LLM_Model,
+    inverse_vocab: Dict[int, str],
 ) -> Dict[str, Any]:
-    
-    # 1. Schéma propre en texte
+
     schema_lines = []
-    for fn_name, fn_def in functions_class.definitions.items():
-        params = fn_def.get("parameters", {})
-        param_strs = [f'"{k}"' for k in params.keys()]
-        reqs = ", ".join(param_strs) if param_strs else "no parameters"
-        schema_lines.append(f"- {fn_name}: requires {reqs}")
-    defs_str = "\n".join(schema_lines)
+    for name, f in functions_class.definitions.items():
+        desc = f.get("description", "")
+        params = f.get("parameters", {})
+        param_str = ", ".join(
+            f'"{k}": {v.get("type", "unknown")}' for k, v in params.items()
+        )
+        schema_lines.append(f"- {name}: {desc}\n  Parameters: {{{param_str}}}")
 
-    prefix_str = f'{{\n  "prompt": "{prompt_text}",\n  "name": "'
     context = (
-        "Extract the required function parameters as a JSON object.\n"
-        f"Available functions:\n{defs_str}\n\n"
-        f"Request: {prompt_text}\n"
-        f"Output:\n{prefix_str}"
+        "You are an exact parameter extractor. Select the correct "
+        "function and extract the literal arguments.\n"
+        "Copy values exactly as they appear in the request, preserving "
+        "full file paths, URLs, and special characters.\n"
+        f"Available functions:\n{chr(10).join(schema_lines)}\n\n"
     )
-    
-    generated_tokens = llm.encode(context).tolist()[0]
-    
-    state = "NAME"
-    selected_function_name = ""
-    current_text = prefix_str
-    params_text = ""
-    
-    print(prefix_str, end="", flush=True)
 
-    for _ in range(300): 
-        # TRANSITION
-        if state == "TRANSITION":
-            transition_str = '",\n  "parameters": '
-            generated_tokens.extend(llm.encode(transition_str).tolist()[0])
-            print(transition_str, end="", flush=True)
-            current_text += transition_str
-            state = "PARAMS"
-            params_text = "" # On réinitialise pour capturer UNIQUEMENT le JSON des paramètres
-            continue
-            
-        logits = llm.get_logits_from_input_ids(generated_tokens)
-        logits_np = np.array(logits, dtype=np.float32)
-        is_allowed = np.zeros(len(logits_np), dtype=bool)
-        
-        # CONTRAINTES
-        if state == "NAME":
-            name_start = current_text.rfind('"name": "') + 9
-            current_name = current_text[name_start:]
-            
-            if current_name in functions_class.list:
-                for tid, tstr in inverse_vocab.items():
-                    if '"' in tstr:
-                        is_allowed[tid] = True
-                        
-            for tid, tstr in inverse_vocab.items():
-                clean = tstr.replace("Ġ", "").replace("Ċ", "").replace("ĉ", "")
-                if not clean:
-                    continue
-                potential = current_name + clean
-                if any(fn.startswith(potential) for fn in functions_class.list):
-                    is_allowed[tid] = True
-                    
-        elif state == "PARAMS":
-            # Analyse de ce qui a été généré DANS les paramètres
-            b_count = 0
-            i_str = False
-            esc = False
-            h_opened = False
-            found_keys = set()
-            curr_str = ""
+    examples = [
+        {
+            "prompt": "Read the file at /home/user/data.json with "
+            "utf-8 encoding",
+            "name": "fn_read_file",
+            "parameters": {"path": "/home/user/data.json",
+                           "encoding": "utf-8"},
+        },
+        {
+            "prompt": 'Format template: Say "hello" to {name}',
+            "name": "fn_format_template",
+            "parameters": {"template": 'Say "hello" to {name}'},
+        },
+        {
+            "prompt": "Calculate compound interest on 1234567.89 at "
+            "0.0375 rate for 23 years",
+            "name": "fn_calculate_compound_interest",
+            "parameters": {"principal": 1234567.89, "rate": 0.0375,
+                           "years": 23},
+        },
+    ]
 
-            for i, char in enumerate(params_text):
-                if esc:
-                    esc = False
-                    continue
-                if char == '\\':
-                    esc = True
-                    continue
-                if char == '"':
-                    i_str = not i_str
-                    if not i_str:
-                        # Détection des clés (suivies de ':')
-                        j = i + 1
-                        while j < len(params_text) and params_text[j] in ' \n\t\r':
-                            j += 1
-                        if j < len(params_text) and params_text[j] == ':':
-                            found_keys.add(curr_str)
-                    curr_str = ""
-                    continue
+    for ex in examples:
+        ex_str = json.dumps(ex, indent=2)
+        context += f"Request: {ex['prompt']}\n{ex_str}\n\n"
 
-                if i_str:
-                    curr_str += char
-                else:
-                    if char == '{':
-                        h_opened = True
-                        b_count += 1
-                    elif char == '}':
-                        b_count -= 1
+    safe_prompt = (
+        prompt_text.replace("\\", "\\\\").replace('"', '\\"'
+                                                  ).replace("\n", "\\n")
+    )
+    context += f"Request: {prompt_text}\n"
 
-            expected_keys = functions_class.definitions.get(selected_function_name, {}).get("parameters", {}).keys()
-            all_keys_found = (len(found_keys) >= len(expected_keys))
+    prefix = f'{{\n  "prompt": "{safe_prompt}",\n  "name": "'
 
-            if not h_opened:
-                for tid, tstr in inverse_vocab.items():
-                    clean = tstr.replace("Ġ", "").replace("Ċ", "").replace("ĉ", "")
-                    if "{" in clean and "[" not in clean:
-                        is_allowed[tid] = True
-            elif i_str:
-                is_allowed.fill(True)
-            else:
-                # LA CORRECTION EST ICI : on autorise TOUS les caractères valides du JSON y compris les sauts de ligne \n \t \r
-                valid_chars = set(' {}[],.:"-_0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\n\t\r\\/')
-                for tid, tstr in inverse_vocab.items():
-                    clean = tstr.replace("Ġ", " ").replace("Ċ", "\n").replace("ĉ", "\t")
-                    if all(c in valid_chars for c in clean):
-                        # Blocage des virgules si on a déjà toutes les clés (force la fermeture)
-                        if all_keys_found and ',' in clean:
-                            continue
-                        is_allowed[tid] = True
+    encoded = llm.encode(context + prefix).tolist()
+    tokens = encoded[0] if isinstance(encoded[0], list) else encoded
+
+    print(prefix, end="", flush=True)
+
+    selected_name = ""
+    current_name_str = ""
+
+    for _ in range(50):
+        logits = np.array(llm.get_logits_from_input_ids(tokens),
+                          dtype=np.float32)
+        is_allowed = np.zeros(len(logits), dtype=bool)
+
+        for tid, tstr in inverse_vocab.items():
+            clean = tstr.replace("Ġ", "").replace("Ċ", "").replace("ĉ", "")
+            if not clean:
+                continue
+
+            if (current_name_str in functions_class.list and
+                    clean.startswith('"')):
+                is_allowed[tid] = True
+
+            potential = current_name_str + clean
+            if any(fn.startswith(potential) for fn in functions_class.list):
+                is_allowed[tid] = True
 
         if not np.any(is_allowed):
             is_allowed.fill(True)
-            
-        # Triage du Token (Greedy Decoding)
-        masked_logits = np.where(is_allowed, logits_np, -1e10)
+
+        masked_logits = np.where(is_allowed, logits, -1e10)
         next_token = int(np.argmax(masked_logits))
-        
-        generated_tokens.append(next_token)
-        token_str = inverse_vocab.get(next_token, "")
-        clean_new_token = token_str.replace("Ġ", " ").replace("Ċ", "\n").replace("ĉ", "\t")
-        
-        print(clean_new_token, end="", flush=True)
-        
-        current_text += clean_new_token
-        if state == "PARAMS":
-            params_text += clean_new_token
+        tokens.append(next_token)
 
-        # VERIFICATION DES ÉTATS ET ARRÊT
-        if state == "NAME":
-            name_start = current_text.rfind('"name": "') + 9
-            current_name = current_text[name_start:]
-            if current_name.endswith('"'):
-                func_name = current_name[:-1]
-                if func_name in functions_class.list:
-                    selected_function_name = func_name
-                    state = "TRANSITION"
-                    
-        elif state == "PARAMS":
-            # On recompte rapidement pour voir si le token qu'on vient d'ajouter a fermé l'accolade
-            final_b = 0
-            final_str = False
-            final_esc = False
-            final_open = False
-            for char in params_text:
-                if final_esc:
-                    final_esc = False
-                    continue
-                if char == '\\':
-                    final_esc = True
-                    continue
-                if char == '"':
-                    final_str = not final_str
-                    continue
-                if not final_str:
-                    if char == '{':
-                        final_open = True
-                        final_b += 1
-                    elif char == '}':
-                        final_b -= 1
+        clean_token = (
+            inverse_vocab.get(next_token, "")
+            .replace("Ġ", "")
+            .replace("Ċ", "")
+            .replace("ĉ", "")
+        )
 
-            # CONDITIONS D'ARRÊT PARFAITES
-            if final_open and final_b <= 0 and not final_str:
-                print("\n", flush=True)
-                break
-                
-    # L'extraction ne peut plus échouer, on parse directement params_text
-    try:
-        params_obj = json.loads(params_text)
-    except Exception:
-        params_obj = {}
+        if '"' in clean_token:
+            idx = clean_token.find('"')
+            current_name_str += clean_token[:idx]
+            print(clean_token[:idx] + '"', end="", flush=True)
+            selected_name = current_name_str
+            break
+        else:
+            current_name_str += clean_token
+            print(clean_token, end="", flush=True)
 
-    return {
-        "prompt": prompt_text,
-        "name": selected_function_name,
-        "parameters": params_obj
-    }
+    if selected_name not in functions_class.definitions:
+        selected_name = (functions_class.list[0] if functions_class.list
+                         else "unknown")
 
+    expected_params = functions_class.definitions.get(selected_name, {}).get(
+        "parameters", {}
+    )
+    params_obj = {}
 
-def load_json_file(file_path: str) -> Any:
-    path = Path(file_path)
-    if not path.exists():
-        print(f"Error: File not found: {file_path}", file=sys.stderr)
-        sys.exit(1)
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    trans_str = ',\n  "parameters": {'
+    if expected_params:
+        trans_str += "\n"
+
+    encoded_trans = llm.encode(trans_str).tolist()
+    tokens.extend(
+        encoded_trans[0] if isinstance(encoded_trans[0], list)
+        else encoded_trans
+    )
+    print(trans_str, end="", flush=True)
+
+    keys = list(expected_params.keys())
+    for i, key in enumerate(keys):
+        param_type = expected_params[key].get("type", "string")
+        is_numeric = param_type in ("number", "integer")
+        is_bool = param_type == "boolean"
+
+        key_str = f'    "{key}": '
+        if not is_numeric and not is_bool:
+            key_str += '"'
+
+        encoded_key = llm.encode(key_str).tolist()
+        tokens.extend(
+            encoded_key[0] if isinstance(encoded_key[0], list) else encoded_key
+        )
+        print(key_str, end="", flush=True)
+
+        val_raw = ""
+
+        for _ in range(150):
+            logits = np.array(llm.get_logits_from_input_ids(tokens),
+                              dtype=np.float32)
+            is_allowed = np.zeros(len(logits), dtype=bool)
+
+            if is_numeric:
+                valid_chars = set("0123456789.-")
+                for tid, tstr in inverse_vocab.items():
+                    clean = tstr.replace("Ġ", " ").replace("Ċ", "\n")
+                    clean = clean.replace("ĉ", "\t")
+                    if any(c in clean for c in [",", "}", "\n", " "]):
+                        is_allowed[tid] = True
+                    elif all(c in valid_chars for c in clean):
+                        is_allowed[tid] = True
+            elif is_bool:
+                valid_chars = set("truefalseTRUEFALSE")
+                for tid, tstr in inverse_vocab.items():
+                    clean = tstr.replace("Ġ", " ").replace("Ċ", "\n")
+                    clean = clean.replace("ĉ", "\t")
+                    if any(c in clean for c in [",", "}", "\n", " "]):
+                        is_allowed[tid] = True
+                    elif all(c in valid_chars for c in clean):
+                        is_allowed[tid] = True
+            else:
+                for tid, tstr in inverse_vocab.items():
+                    clean = tstr.replace("Ġ", " ").replace("Ċ", "\n")
+                    clean = clean.replace("ĉ", "\t")
+                    if "\n" not in clean or '"' in clean:
+                        is_allowed[tid] = True
+
+            if not np.any(is_allowed):
+                is_allowed.fill(True)
+
+            masked_logits = np.where(is_allowed, logits, -1e10)
+            next_token = int(np.argmax(masked_logits))
+            tokens.append(next_token)
+
+            raw = inverse_vocab.get(next_token, "")
+            clean_token = (
+                raw.replace("Ġ", " ").replace("Ċ", "\n").replace("ĉ", "\t")
+            )
+
+            if is_numeric or is_bool:
+                if any(c in clean_token for c in [",", "}", "\n", " "]):
+                    idx_list = [
+                        clean_token.find(c)
+                        for c in [",", "}", "\n", " "]
+                        if clean_token.find(c) != -1
+                    ]
+                    idx = min(idx_list) if idx_list else len(clean_token)
+                    val_raw += clean_token[:idx]
+                    print(clean_token[:idx], end="", flush=True)
+                    break
+                else:
+                    val_raw += clean_token
+                    print(clean_token, end="", flush=True)
+            else:
+                val_raw += clean_token
+
+                escape = False
+                idx = -1
+                for j, c in enumerate(val_raw):
+                    if c == "\\" and not escape:
+                        escape = True
+                    elif c == '"' and not escape:
+                        idx = j
+                        break
+                    else:
+                        escape = False
+
+                if idx != -1:
+                    prev_len = len(val_raw) - len(clean_token)
+                    idx_in_clean = idx - prev_len
+                    if idx_in_clean >= 0:
+                        print(clean_token[: idx_in_clean + 1],
+                              end="", flush=True)
+
+                    val_str_json = '"' + val_raw[: idx + 1]
+                    try:
+                        params_obj[key] = json.loads(val_str_json)
+                    except json.JSONDecodeError:
+                        params_obj[key] = val_raw[:idx]
+                    break
+                else:
+                    print(clean_token, end="", flush=True)
+
+        if is_numeric:
+            val_clean = val_raw.strip()
+            try:
+                params_obj[key] = (
+                    float(val_clean) if "." in val_clean else int(val_clean)
+                )
+            except ValueError:
+                params_obj[key] = 0
+        elif is_bool:
+            params_obj[key] = val_raw.strip().lower() == "true"
+
+        if i < len(keys) - 1:
+            sep_str = ",\n"
+            encoded_sep = llm.encode(sep_str).tolist()
+            tokens.extend(
+                encoded_sep[0] if isinstance(encoded_sep[0],
+                                             list) else encoded_sep
+            )
+            print(sep_str, end="", flush=True)
+        else:
+            sep_str = "\n  }"
+            print(sep_str, end="", flush=True)
+
+    print("\n}", flush=True)
+
+    return {"prompt": prompt_text, "name": selected_name,
+            "parameters": params_obj}
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Constrained Decoding Function Caller")
-    parser.add_argument("--functions_definition", type=str, default="data/input/functions_definition.json")
-    parser.add_argument("--input", type=str, default="data/input/function_calling_tests.json")
-    parser.add_argument("--output", type=str, default="data/output/function_calling_results.json")
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--functions_definition",
+        type=str,
+        default="data/input/functions_definition.json",
+    )
+    parser.add_argument(
+        "--input", type=str, default="data/input/function_calling_tests.json"
+    )
+    parser.add_argument(
+        "--output", type=str,
+        default="data/output/function_calling_results.json"
+    )
     args = parser.parse_args()
 
-    f_data = load_json_file(args.functions_definition)
-    names = [f.get("name") for f in f_data]
-    defs = {f["name"]: f for f in f_data if isinstance(f, dict) and "name" in f}
-    functions_class = FunctionsClass(list=names, definitions=defs)
+    with open(args.functions_definition, "r", encoding="utf-8") as f:
+        f_data = json.load(f)
+    functions = FunctionsClass(
+        list=[f["name"] for f in f_data], definitions={
+            f["name"]: f for f in f_data}
+    )
 
-    input_data = load_json_file(args.input)
+    with open(args.input, "r", encoding="utf-8") as f:
+        prompts = json.load(f)
 
     llm = Small_LLM_Model()
     vocab = make_vocab_dict(llm.get_path_to_vocabulary_json())
     inverse_vocab = {int(v): k for k, v in vocab.items()}
 
     results = []
-    for i, item in enumerate(input_data):
-        prompt_text = item["prompt"]
-        print(f"\n--- Processing prompt {i + 1}/{len(input_data)} ---")
-        
+    for i, item in enumerate(prompts):
+        print(f"\n--- Processing {i + 1}/{len(prompts)} ---")
         try:
-            result_json = generate_with_constraints(
-                prompt_text, functions_class, llm, vocab, inverse_vocab
+            res = generate_constrained_call(
+                item["prompt"], functions, llm, inverse_vocab
             )
-            results.append(result_json)
+            results.append(res)
         except Exception as e:
-            print(f"\n[!] Error processing prompt {i}: {e}", file=sys.stderr)
+            print(f"Erreur: {e}", file=sys.stderr)
 
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as f:
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
-    
-    print("\n--- TERMINE ! ---")
 
 
 if __name__ == "__main__":
