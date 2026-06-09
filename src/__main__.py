@@ -23,6 +23,10 @@ def main() -> None:
         "--output", type=str,
         default="data/output/function_calling_results.json"
     )
+    parser.add_argument(
+        "--interactive", action="store_true",
+        help="Lancer le mode interactif"
+    )
     args = parser.parse_args()
 
     with open(args.functions_definition, "r", encoding="utf-8") as f:
@@ -32,12 +36,29 @@ def main() -> None:
             f["name"]: f for f in f_data}
     )
 
-    with open(args.input, "r", encoding="utf-8") as f:
-        prompts = json.load(f)
-
     llm = Small_LLM_Model()
     vocab = make_vocab_dict(llm.get_path_to_vocabulary_json())
     inverse_vocab = {int(v): k for k, v in vocab.items()}
+
+    if args.interactive:
+        while True:
+            try:
+                user_input = input("Prompt > ")
+                if user_input.lower() in ("quit", "exit"):
+                    break
+                if not user_input.strip():
+                    continue
+                res = generate_constrained_call(
+                    user_input, functions, llm, inverse_vocab
+                )
+            except KeyboardInterrupt:
+                break
+            except Exception as e:
+                print(f"Erreur: {e}", file=sys.stderr)
+        return
+
+    with open(args.input, "r", encoding="utf-8") as f:
+        prompts = json.load(f)
 
     results = []
     for i, item in enumerate(prompts):
